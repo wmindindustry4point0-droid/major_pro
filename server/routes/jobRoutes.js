@@ -5,16 +5,24 @@ const AIWorkspace = require('../models/AIWorkspace');
 const multer = require('multer');
 const path = require('path');
 const axios = require('axios');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-// Multer Setup
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, 'uploads/');
+// Cloudinary Setup
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'hiremind_resumes',
+        // We want to keep the original pdf format
+        format: async (req, file) => 'pdf',
+        public_id: (req, file) => Date.now() + '-' + Math.round(Math.random() * 1E9),
     },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
 });
 const upload = multer({ storage });
 
@@ -43,8 +51,8 @@ router.get('/', async (req, res) => {
 router.post('/analyze-fit', upload.single('resume'), async (req, res) => {
     try {
         const { jobDescription, requiredSkills } = req.body;
-        const resumePath = req.file.path;
-        const absoluteResumePath = path.resolve(resumePath);
+        // With Cloudinary, the URL is stored in req.file.path
+        const absoluteResumePath = req.file.path;
 
         // Parse requiredSkills back to array if sent as JSON string
         let skills = [];
@@ -94,7 +102,7 @@ router.post('/analyze-workspace', upload.array('resumes', 200), async (req, res)
         // Format files for Python API
         const resumesPayload = req.files.map((file, index) => ({
             id: `temp_req_${Date.now()}_${index}`,
-            path: path.resolve(file.path),
+            path: file.path, // This is now a Cloudinary URL
             fileName: file.originalname
         }));
 

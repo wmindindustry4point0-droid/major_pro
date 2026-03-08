@@ -5,6 +5,8 @@ import os
 import re
 import string
 import nltk
+import requests
+import io
 from nltk.corpus import stopwords
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -36,11 +38,20 @@ TECH_SKILLS = [
     "html", "css", "sass", "tailwind", "linux", "bash", "agile", "scrum", "jira"
 ]
 
-def extract_text_from_pdf(pdf_path):
-    """Uses pdfplumber to accurately extract text from complex resume layouts"""
+def extract_text_from_pdf(pdf_path_or_url):
+    """Uses pdfplumber to accurately extract text from complex resume layouts, supporting both local files and URLs."""
     text = ""
     try:
-        with pdfplumber.open(pdf_path) as pdf:
+        # Check if it's a URL
+        if pdf_path_or_url.startswith('http://') or pdf_path_or_url.startswith('https://'):
+            response = requests.get(pdf_path_or_url)
+            response.raise_for_status() # Raise exception for bad status codes
+            pdf_file = io.BytesIO(response.content)
+        else:
+            # It's a local file path
+            pdf_file = pdf_path_or_url
+
+        with pdfplumber.open(pdf_file) as pdf:
             for page in pdf.pages:
                 page_text = page.extract_text()
                 if page_text:
@@ -126,7 +137,7 @@ def analyze_batch():
         r_path = resume.get('path')
         r_fileName = resume.get('fileName')
 
-        if not os.path.exists(r_path):
+        if not (r_path.startswith('http://') or r_path.startswith('https://')) and not os.path.exists(r_path):
             results.append({
                 "id": r_id, "fileName": r_fileName, 
                 "status": "Failed", "error": "File not found"

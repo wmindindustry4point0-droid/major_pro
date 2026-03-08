@@ -5,15 +5,23 @@ const multer = require('multer');
 const path = require('path');
 const axios = require('axios');
 const Job = require('../models/Job');
+const cloudinary = require('cloudinary').v2;
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
-// Multer Setup for Resume Upload
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, 'uploads/');
+// Cloudinary Setup for Resume Upload
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'hiremind_resumes',
+        format: async (req, file) => 'pdf',
+        public_id: (req, file) => Date.now() + '-' + Math.round(Math.random() * 1E9),
     },
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname));
-    }
 });
 
 const upload = multer({ storage });
@@ -22,6 +30,7 @@ const upload = multer({ storage });
 router.post('/apply', upload.single('resume'), async (req, res) => {
     try {
         const { candidateId, jobId, coverLetter } = req.body;
+        // With Cloudinary, the URL is stored in req.file.path
         const resumePath = req.file.path;
 
         const application = new Application({
@@ -68,10 +77,8 @@ router.post('/analyze/:applicationId', async (req, res) => {
         // Call Python Service
         // Assuming Python service is running on port 5001
         try {
-            // We need to send the file path or content. For simplicity, let's assume we send the absolute path.
-            // In a real world, we might stream the file or use a shared volume.
-            // Since this is local, absolute path works.
-            const absoluteResumePath = path.resolve(application.resumePath);
+            // We need to send the Cloudinary URL.
+            const absoluteResumePath = application.resumePath;
 
             const response = await axios.post('http://127.0.0.1:5001/analyze', {
                 resume_path: absoluteResumePath,
