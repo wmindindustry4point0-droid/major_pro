@@ -15,7 +15,7 @@ const Register = () => {
         setIsLoading(true);
         setError('');
         try {
-            await axios.post('http://localhost:5000/api/auth/register', formData);
+            await axios.post('https://hiremind-ai-4k68.onrender.com/api/auth/register', formData);
             navigate('/login');
         } catch (err) {
             setError(err.response?.data?.error || 'Registration failed. Please try again.');

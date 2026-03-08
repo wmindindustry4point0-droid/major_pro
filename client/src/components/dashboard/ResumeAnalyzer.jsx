@@ -17,7 +17,7 @@ const ResumeAnalyzer = ({ user }) => {
 
     const fetchWorkspaces = async () => {
         try {
-            const res = await axios.get(`http://localhost:5000/api/jobs/workspaces/${user._id}`);
+            const res = await axios.get(`https://hiremind-ai-4k68.onrender.com/api/jobs/workspaces/${user._id}`);
             setSavedWorkspaces(res.data);
         } catch (err) {
             console.error("Error fetching workspaces", err);
@@ -61,7 +61,7 @@ const ResumeAnalyzer = ({ user }) => {
                 requiredSkills: ['Python', 'Machine Learning', 'TensorFlow'],
                 status: 'Draft'
             };
-            const res = await axios.post('http://localhost:5000/api/jobs/workspaces', newWorkspace);
+            const res = await axios.post('https://hiremind-ai-4k68.onrender.com/api/jobs/workspaces', newWorkspace);
             setSavedWorkspaces([res.data, ...savedWorkspaces]);
             loadWorkspace(res.data);
         } catch (err) {
@@ -83,7 +83,7 @@ const ResumeAnalyzer = ({ user }) => {
     const saveWorkspaceState = async (updates) => {
         if (!workspace || !workspace._id) return;
         try {
-            const res = await axios.put(`http://localhost:5000/api/jobs/workspaces/${workspace._id}`, updates);
+            const res = await axios.put(`https://hiremind-ai-4k68.onrender.com/api/jobs/workspaces/${workspace._id}`, updates);
             setWorkspace(res.data);
             setSavedWorkspaces(prev => prev.map(w => w._id === res.data._id ? res.data : w));
         } catch (err) {
@@ -126,7 +126,7 @@ const ResumeAnalyzer = ({ user }) => {
         });
 
         try {
-            const response = await axios.post('http://localhost:5000/api/jobs/analyze-workspace', formData, {
+            const response = await axios.post('https://hiremind-ai-4k68.onrender.com/api/jobs/analyze-workspace', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
 

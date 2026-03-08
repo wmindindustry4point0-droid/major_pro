@@ -40,7 +40,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
         setIsLoading(true);
         setError('');
         try {
-            const res = await axios.post('http://localhost:5000/api/auth/login', {
+            const res = await axios.post('https://hiremind-ai-4k68.onrender.com/api/auth/login', {
                 email: formData.email,
                 password: formData.password
             });
@@ -69,10 +69,10 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                 role: selectedRole,
                 companyName: selectedRole === 'company' ? formData.companyName : ''
             };
-            await axios.post('http://localhost:5000/api/auth/register', registerData);
+            await axios.post('https://hiremind-ai-4k68.onrender.com/api/auth/register', registerData);
 
             // Auto login after registration
-            const loginRes = await axios.post('http://localhost:5000/api/auth/login', {
+            const loginRes = await axios.post('https://hiremind-ai-4k68.onrender.com/api/auth/login', {
                 email: formData.email,
                 password: formData.password
             });

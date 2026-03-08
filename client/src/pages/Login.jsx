@@ -13,7 +13,7 @@ const Login = () => {
         setIsLoading(true);
         setError('');
         try {
-            const res = await axios.post('http://localhost:5000/api/auth/login', formData);
+            const res = await axios.post('https://hiremind-ai-4k68.onrender.com/api/auth/login', formData);
             localStorage.setItem('user', JSON.stringify(res.data));
             if (res.data.role === 'company') {
                 navigate('/company-dashboard');

@@ -16,7 +16,7 @@ const CandidateDashboard = () => {
 
     const fetchJobs = async () => {
         try {
-            const res = await axios.get('http://localhost:5000/api/jobs');
+            const res = await axios.get('https://hiremind-ai-4k68.onrender.com/api/jobs');
             setJobs(res.data);
         } catch (err) {
             console.error(err);
@@ -59,7 +59,7 @@ const CandidateDashboard = () => {
 
         try {
             // Assuming I'll add this route
-            const res = await axios.post('http://localhost:5000/api/jobs/analyze-fit', formData, {
+            const res = await axios.post('https://hiremind-ai-4k68.onrender.com/api/jobs/analyze-fit', formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data'
                 }
@@ -85,7 +85,7 @@ const CandidateDashboard = () => {
         formData.append('resume', resume);
 
         try {
-            await axios.post('http://localhost:5000/api/applications/apply', formData, {
+            await axios.post('https://hiremind-ai-4k68.onrender.com/api/applications/apply', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             alert("Applied successfully!");

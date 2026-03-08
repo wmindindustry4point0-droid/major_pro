@@ -27,7 +27,7 @@ const JobManagement = ({ user }) => {
     const fetchJobs = async () => {
         setIsLoading(true);
         try {
-            const res = await axios.get('http://localhost:5000/api/jobs');
+            const res = await axios.get('https://hiremind-ai-4k68.onrender.com/api/jobs');
             const myJobs = res.data.filter(job => job.companyId._id === user._id || job.companyId === user._id);
             setJobs(myJobs);
         } catch (err) {
@@ -40,7 +40,7 @@ const JobManagement = ({ user }) => {
     const fetchApplicants = async (jobId) => {
         setIsLoading(true);
         try {
-            const res = await axios.get(`http://localhost:5000/api/applications/job/${jobId}`);
+            const res = await axios.get(`https://hiremind-ai-4k68.onrender.com/api/applications/job/${jobId}`);
             setApplicants(res.data);
         } catch (err) {
             console.error(err);
@@ -54,7 +54,7 @@ const JobManagement = ({ user }) => {
         setIsLoading(true);
         try {
             const skillsArray = newJob.requiredSkills.split(',').map(s => s.trim());
-            await axios.post('http://localhost:5000/api/jobs', {
+            await axios.post('https://hiremind-ai-4k68.onrender.com/api/jobs', {
                 ...newJob,
                 requiredSkills: skillsArray,
                 companyId: user._id
@@ -75,7 +75,7 @@ const JobManagement = ({ user }) => {
         if (!window.confirm("Are you sure you want to delete this job and all its applications?")) return;
 
         try {
-            await axios.delete(`http://localhost:5000/api/jobs/${jobId}`);
+            await axios.delete(`https://hiremind-ai-4k68.onrender.com/api/jobs/${jobId}`);
             fetchJobs();
         } catch (err) {
             console.error(err);
@@ -308,7 +308,7 @@ const JobManagement = ({ user }) => {
                                                     <td className="px-6 py-4 text-slate-400">{new Date(app.createdAt).toLocaleDateString()}</td>
                                                     <td className="px-6 py-4 text-right">
                                                         <a
-                                                            href={`http://localhost:5000/${app.resumePath}`}
+                                                            href={app.resumePath}
                                                             target="_blank"
                                                             rel="noopener noreferrer"
                                                             className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-medium transition-colors"
