@@ -80,7 +80,7 @@ router.post('/analyze/:applicationId', async (req, res) => {
             // We need to send the Cloudinary URL.
             const absoluteResumePath = application.resumePath;
 
-            const response = await axios.post('https://hiremind-ai-1.onrender.com/analyze', {
+            const response = await axios.post(`${process.env.AI_SERVICE_URL || "http://127.0.0.1:5001"}/analyze`, {
                 resume_path: absoluteResumePath,
                 job_description: application.jobId.description,
                 required_skills: application.jobId.requiredSkills
