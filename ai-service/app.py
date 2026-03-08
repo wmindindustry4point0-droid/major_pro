@@ -21,9 +21,15 @@ stop_words = set(stopwords.words('english'))
 
 # Load the BERT Contextual Model lazily or at startup
 # "all-MiniLM-L6-v2" is extremely fast and effective for semantic similarity
-print("Loading BERT Model...")
-model = SentenceTransformer('all-MiniLM-L6-v2')
-print("BERT Model Loaded.")
+model = None
+
+def get_model():
+    global model
+    if model is None:
+        print("Loading BERT Model lazily...")
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        print("BERT Model Loaded.")
+    return model
 
 # -------------------------------------------------------------
 # SKILL DICTIONARY (For Robust Metadata Extraction)
@@ -111,6 +117,46 @@ def preprocess_text(text):
     cleaned_words = [w for w in words if w not in stop_words]
     return " ".join(cleaned_words)
 
+@app.route('/analyze', methods=['POST'])
+def analyze():
+    data = request.json
+    r_path = data.get('resume_path', "")
+    job_description = data.get('job_description', "")
+    required_skills = data.get('required_skills', [])
+
+    if not r_path or not job_description:
+        return jsonify({"error": "Missing resume or job description."}), 400
+
+    if not (r_path.startswith('http://') or r_path.startswith('https://')) and not os.path.exists(r_path):
+        return jsonify({"error": "File not found"}), 400
+
+    raw_text = extract_text_from_pdf(r_path)
+    if not raw_text.strip():
+        return jsonify({"error": "No parseable text"}), 400
+
+    metadata = extract_metadata(raw_text)
+    candidate_skills = set([s.lower() for s in metadata['skills']])
+    
+    missing_skills = []
+    if required_skills:
+        req_set = set([s.lower() for s in required_skills])
+        missing_skills = list(req_set - candidate_skills)
+
+    clean_resume = preprocess_text(raw_text)
+    clean_jd = preprocess_text(job_description)
+    
+    m = get_model()
+    resume_embedding = m.encode([clean_resume])
+    jd_embedding = m.encode([clean_jd])
+    similarity = cosine_similarity(resume_embedding, jd_embedding)[0][0]
+    match_score = round(float(similarity) * 100, 1)
+
+    return jsonify({
+        "match_percentage": match_score,
+        "feedback": f"Match score: {match_score}%. Missing skills: {', '.join(missing_skills) if missing_skills else 'None'}.",
+        "skills": metadata['skills']
+    })
+
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
     """
@@ -128,7 +174,8 @@ def analyze_batch():
     # Clean the JD
     clean_jd = preprocess_text(job_description)
     # Generate JD Embedding (1 x 384 vector)
-    jd_embedding = model.encode([clean_jd])
+    m = get_model()
+    jd_embedding = m.encode([clean_jd])
 
     results = []
 
@@ -167,7 +214,7 @@ def analyze_batch():
         clean_resume = preprocess_text(raw_text)
 
         # Pipeline Step 4 & 5: BERT Embeddings & Cosine Similarity
-        resume_embedding = model.encode([clean_resume])
+        resume_embedding = m.encode([clean_resume])
         similarity = cosine_similarity(resume_embedding, jd_embedding)[0][0]
         
         # Convert similarity to a 0-100 percentage
