@@ -1,35 +1,41 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import pdfplumber
 import os
 import re
 import string
-import nltk
 import requests
 import io
-from nltk.corpus import stopwords
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
 
-# Initialize app and NLTK
+# Initialize app
 app = Flask(__name__)
 CORS(app)
-
-# Ensure NLTK stopwords are available
-nltk.download('stopwords', quiet=True)
-stop_words = set(stopwords.words('english'))
 
 # Load the BERT Contextual Model lazily or at startup
 # "all-MiniLM-L6-v2" is extremely fast and effective for semantic similarity
 model = None
+stop_words = None
+
+def get_stop_words():
+    global stop_words
+    if stop_words is None:
+        import nltk
+        from nltk.corpus import stopwords
+        nltk.download('stopwords', quiet=True)
+        stop_words = set(stopwords.words('english'))
+    return stop_words
 
 def get_model():
     global model
     if model is None:
         print("Loading BERT Model lazily...")
+        from sentence_transformers import SentenceTransformer
         model = SentenceTransformer('all-MiniLM-L6-v2')
         print("BERT Model Loaded.")
     return model
+
+def get_cosine_similarity():
+    from sklearn.metrics.pairwise import cosine_similarity
+    return cosine_similarity
 
 # -------------------------------------------------------------
 # SKILL DICTIONARY (For Robust Metadata Extraction)
@@ -46,6 +52,7 @@ TECH_SKILLS = [
 
 def extract_text_from_pdf(pdf_path_or_url):
     """Uses pdfplumber to accurately extract text from complex resume layouts, supporting both local files and URLs."""
+    import pdfplumber
     text = ""
     try:
         # Check if it's a URL
@@ -113,8 +120,9 @@ def preprocess_text(text):
     # Remove punctuation
     text = text.translate(str.maketrans('', '', string.punctuation))
     # Remove stopwords
+    sw = get_stop_words()
     words = text.split()
-    cleaned_words = [w for w in words if w not in stop_words]
+    cleaned_words = [w for w in words if w not in sw]
     return " ".join(cleaned_words)
 
 @app.route('/analyze', methods=['POST'])
@@ -146,9 +154,10 @@ def analyze():
     clean_jd = preprocess_text(job_description)
     
     m = get_model()
+    cos_sim_func = get_cosine_similarity()
     resume_embedding = m.encode([clean_resume])
     jd_embedding = m.encode([clean_jd])
-    similarity = cosine_similarity(resume_embedding, jd_embedding)[0][0]
+    similarity = cos_sim_func(resume_embedding, jd_embedding)[0][0]
     match_score = round(float(similarity) * 100, 1)
 
     return jsonify({
@@ -214,8 +223,9 @@ def analyze_batch():
         clean_resume = preprocess_text(raw_text)
 
         # Pipeline Step 4 & 5: BERT Embeddings & Cosine Similarity
+        cos_sim_func = get_cosine_similarity()
         resume_embedding = m.encode([clean_resume])
-        similarity = cosine_similarity(resume_embedding, jd_embedding)[0][0]
+        similarity = cos_sim_func(resume_embedding, jd_embedding)[0][0]
         
         # Convert similarity to a 0-100 percentage
         match_score = round(float(similarity) * 100, 1)
