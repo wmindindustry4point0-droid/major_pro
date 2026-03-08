@@ -63,7 +63,7 @@ router.post('/analyze-fit', upload.single('resume'), async (req, res) => {
         }
 
         try {
-            const response = await axios.post('http://127.0.0.1:5001/analyze', {
+            const response = await axios.post('https://hiremind-ai-1.onrender.com/analyze', {
                 resume_path: absoluteResumePath,
                 job_description: jobDescription,
                 required_skills: skills
@@ -106,10 +106,10 @@ router.post('/analyze-workspace', upload.array('resumes', 200), async (req, res)
             fileName: file.originalname
         }));
 
-        console.log("--> Payload prepped for Python. Sending request to http://127.0.0.1:5001/analyze_batch");
+        console.log("--> Payload prepped for Python. Sending request to https://hiremind-ai-1.onrender.com/analyze_batch");
 
         try {
-            const response = await axios.post('http://127.0.0.1:5001/analyze_batch', {
+            const response = await axios.post('https://hiremind-ai-1.onrender.com/analyze_batch', {
                 resumes: resumesPayload,
                 job_description: jobDescription,
                 required_skills: skills
