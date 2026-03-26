@@ -166,6 +166,37 @@ def analyze():
         "skills": metadata['skills']
     })
 
+@app.route('/extract_resume', methods=['POST'])
+def extract_resume():
+    """
+    Extracts structured metadata (Name, Email, Phone, Skills) from a single 
+    candidate resume without requiring a Job Description comparison.
+    """
+    data = request.json
+    r_path = data.get('resume_path', "")
+
+    if not r_path:
+        return jsonify({"error": "Missing resume path."}), 400
+
+    if not (r_path.startswith('http://') or r_path.startswith('https://')) and not os.path.exists(r_path):
+        return jsonify({"error": "File not found"}), 400
+
+    # Pipeline Step 1: Text Extraction
+    raw_text = extract_text_from_pdf(r_path)
+    if not raw_text.strip():
+        return jsonify({"error": "No parseable text"}), 400
+
+    # Pipeline Step 2: Metadata Extractor
+    metadata = extract_metadata(raw_text)
+
+    return jsonify({
+        "status": "Success",
+        "candidateName": metadata['name'],
+        "email": metadata['email'],
+        "phone": metadata['phone'],
+        "extractedSkills": metadata['skills']
+    })
+
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
     """

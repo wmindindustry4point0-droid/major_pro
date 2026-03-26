@@ -21,7 +21,8 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
     React.useEffect(() => {
         if (isOpen) {
             setView(initialView);
-            setSelectedRole(null);
+            // Default to candidate if they skip the role selection screen via "Get Started"
+            setSelectedRole(initialView === 'role' ? null : 'candidate');
             setFormData({ name: '', email: '', password: '', companyName: '' });
             setError('');
         }
