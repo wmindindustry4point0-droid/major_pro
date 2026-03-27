@@ -3,26 +3,46 @@ const router = express.Router();
 const Application = require('../models/Application');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 const axios = require('axios');
 const Job = require('../models/Job');
 const cloudinary = require('cloudinary').v2;
 const { CloudinaryStorage } = require('multer-storage-cloudinary');
 
 // Cloudinary Setup for Resume Upload
-cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET
-});
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY) {
+    cloudinary.config({
+        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+        api_key: process.env.CLOUDINARY_API_KEY,
+        api_secret: process.env.CLOUDINARY_API_SECRET
+    });
+}
 
-const storage = new CloudinaryStorage({
-    cloudinary: cloudinary,
-    params: {
-        folder: 'hiremind_resumes',
-        format: async (req, file) => 'pdf',
-        public_id: (req, file) => Date.now() + '-' + Math.round(Math.random() * 1E9),
-    },
-});
+let storage;
+if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY) {
+    storage = new CloudinaryStorage({
+        cloudinary: cloudinary,
+        params: {
+            folder: 'hiremind_resumes',
+            format: async (req, file) => 'pdf',
+            public_id: (req, file) => Date.now() + '-' + Math.round(Math.random() * 1E9),
+        },
+    });
+} else {
+    // Local File Storage Fallback for Development
+    storage = multer.diskStorage({
+        destination: function (req, file, cb) {
+            const uploadDir = path.join(__dirname, '..', 'uploads');
+            if (!fs.existsSync(uploadDir)) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+            }
+            cb(null, uploadDir);
+        },
+        filename: function (req, file, cb) {
+            cb(null, 'candidate-applied-' + Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname));
+        }
+    });
+}
 
 const upload = multer({ storage });
 
