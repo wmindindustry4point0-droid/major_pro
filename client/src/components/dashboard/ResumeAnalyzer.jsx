@@ -32,6 +32,10 @@ const ResumeAnalyzer = ({ user }) => {
     const [skillsInput, setSkillsInput] = useState('Python, TensorFlow, PyTorch');
     const [requiredSkills, setRequiredSkills] = useState(['Python', 'Machine Learning', 'TensorFlow']);
 
+    // Inline skill input states (replaces window.prompt)
+    const [showSkillInput, setShowSkillInput] = useState(false);
+    const [skillInput, setSkillInput] = useState('');
+
     // Upload & Analysis States
     const [selectedFiles, setSelectedFiles] = useState([]);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -91,11 +95,19 @@ const ResumeAnalyzer = ({ user }) => {
         }
     };
 
+    // ── Skill management (inline input, no window.prompt) ──
     const handleAddSkill = () => {
-        const input = window.prompt("Enter a strictly required skill:");
-        if (input && !requiredSkills.includes(input.trim())) {
-            setRequiredSkills([...requiredSkills, input.trim()]);
+        const trimmed = skillInput.trim();
+        if (trimmed && !requiredSkills.includes(trimmed)) {
+            setRequiredSkills([...requiredSkills, trimmed]);
         }
+        setSkillInput('');
+        setShowSkillInput(false);
+    };
+
+    const handleSkillKeyDown = (e) => {
+        if (e.key === 'Enter') handleAddSkill();
+        if (e.key === 'Escape') { setShowSkillInput(false); setSkillInput(''); }
     };
 
     const handleRemoveSkill = (skillToRemove) => {
@@ -237,16 +249,47 @@ const ResumeAnalyzer = ({ user }) => {
                 <div>
                     <h4 className="text-slate-300 font-semibold mb-3">Must-Have Skills (Used for Gap Analysis)</h4>
                     <p className="text-xs text-slate-500 mb-4">The AI will specifically check if these exact skills exist in the candidate's parsed resume.</p>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 items-center">
                         {requiredSkills.map((skill, i) => (
-                            <span key={i} className="px-3 py-1.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-sm flex items-center justify-between gap-3">
+                            <span key={i} className="px-3 py-1.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-sm flex items-center gap-3">
                                 <span className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> {skill}</span>
-                                <button onClick={() => handleRemoveSkill(skill)} className="hover:text-rose-400"><X className="w-3 h-3" /></button>
+                                <button onClick={() => handleRemoveSkill(skill)} className="hover:text-rose-400 transition-colors"><X className="w-3 h-3" /></button>
                             </span>
                         ))}
-                        <button onClick={handleAddSkill} className="px-3 py-1.5 bg-slate-800 text-slate-400 border border-slate-700 rounded-lg text-sm hover:text-white transition-colors border-dashed">
-                            + Add Skill
-                        </button>
+
+                        {/* Inline skill input */}
+                        {showSkillInput ? (
+                            <div className="flex items-center gap-2">
+                                <input
+                                    autoFocus
+                                    type="text"
+                                    value={skillInput}
+                                    onChange={(e) => setSkillInput(e.target.value)}
+                                    onKeyDown={handleSkillKeyDown}
+                                    placeholder="e.g. React"
+                                    className="px-3 py-1.5 bg-slate-800 border border-indigo-500/50 text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 w-32 placeholder-slate-500"
+                                />
+                                <button
+                                    onClick={handleAddSkill}
+                                    className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm transition-colors"
+                                >
+                                    Add
+                                </button>
+                                <button
+                                    onClick={() => { setShowSkillInput(false); setSkillInput(''); }}
+                                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-sm transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        ) : (
+                            <button
+                                onClick={() => setShowSkillInput(true)}
+                                className="px-3 py-1.5 bg-slate-800 text-slate-400 border border-slate-700 border-dashed rounded-lg text-sm hover:text-white hover:border-indigo-500/50 transition-colors"
+                            >
+                                + Add Skill
+                            </button>
+                        )}
                     </div>
                 </div>
                 <div className="pt-4 border-t border-slate-800">
@@ -350,7 +393,6 @@ const ResumeAnalyzer = ({ user }) => {
             return <div className="text-slate-400 text-center py-12">No rankings available yet. Run analysis first.</div>;
         }
 
-        // Filter successes and sort by matchScore DESC
         const validResults = [...analysisResults].filter(r => r.status === 'Success').sort((a, b) => b.matchScore - a.matchScore);
 
         return (
@@ -392,10 +434,7 @@ const ResumeAnalyzer = ({ user }) => {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4">
-                                            <div className="font-bold text-white mb-1">
-                                                {r.candidateName || r.fileName}
-                                            </div>
-                                            {/* Status Badge */}
+                                            <div className="font-bold text-white mb-1">{r.candidateName || r.fileName}</div>
                                             {r.candidateStatus === 'Shortlisted' ? (
                                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 text-[10px] font-bold uppercase border border-emerald-500/30">
                                                     <CheckCircle2 className="w-3 h-3" /> Shortlisted
@@ -425,14 +464,9 @@ const ResumeAnalyzer = ({ user }) => {
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col gap-1 max-w-[140px]">
                                                 <div className="flex items-end justify-between">
-                                                    <span className={`font-black text-xl text-${scoreInfo.color}-400`}>
-                                                        {r.matchScore}%
-                                                    </span>
-                                                    <span className={`text-[10px] font-bold text-${scoreInfo.color}-400/80 mb-1`}>
-                                                        {scoreInfo.text}
-                                                    </span>
+                                                    <span className={`font-black text-xl text-${scoreInfo.color}-400`}>{r.matchScore}%</span>
+                                                    <span className={`text-[10px] font-bold text-${scoreInfo.color}-400/80 mb-1`}>{scoreInfo.text}</span>
                                                 </div>
-                                                {/* Colored Progress Bar */}
                                                 <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                                                     <motion.div
                                                         initial={{ width: 0 }}
@@ -445,42 +479,25 @@ const ResumeAnalyzer = ({ user }) => {
                                         </td>
                                         <td className="px-6 py-4 text-right">
                                             <div className="flex items-center justify-end gap-2">
-                                                <button
-                                                    onClick={() => openCandidateModal(r)}
-                                                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors border border-slate-700 tooltip"
-                                                    title="View Resume & AI Insights"
-                                                >
+                                                <button onClick={() => openCandidateModal(r)} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg transition-colors border border-slate-700" title="View Resume & AI Insights">
                                                     <Eye className="w-4 h-4" />
                                                 </button>
-
                                                 {r.candidateStatus !== 'Shortlisted' ? (
-                                                    <button
-                                                        onClick={() => handleStatusChange(r.id, 'Shortlisted')}
-                                                        className="p-2 bg-slate-800 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-colors border border-slate-700 hover:border-emerald-500/50 tooltip"
-                                                        title="Shortlist"
-                                                    >
+                                                    <button onClick={() => handleStatusChange(r.id, 'Shortlisted')} className="p-2 bg-slate-800 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-colors border border-slate-700 hover:border-emerald-500/50" title="Shortlist">
                                                         <ThumbsUp className="w-4 h-4" />
                                                     </button>
                                                 ) : (
-                                                    <button
-                                                        disabled
-                                                        className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/50 opacity-50 cursor-not-allowed"
-                                                    >
+                                                    <button disabled className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg border border-emerald-500/50 opacity-50 cursor-not-allowed">
                                                         <CheckCircle2 className="w-4 h-4" />
                                                     </button>
                                                 )}
-
-                                                <button
-                                                    onClick={() => handleStatusChange(r.id, 'Rejected')}
-                                                    className={`p-2 rounded-lg transition-colors border ${r.candidateStatus === 'Rejected' ? 'bg-rose-500/20 text-rose-400 border-rose-500/50' : 'bg-slate-800 hover:bg-rose-500/20 text-rose-400 border-slate-700 hover:border-rose-500/50'}`}
-                                                    title="Reject"
-                                                >
+                                                <button onClick={() => handleStatusChange(r.id, 'Rejected')} className={`p-2 rounded-lg transition-colors border ${r.candidateStatus === 'Rejected' ? 'bg-rose-500/20 text-rose-400 border-rose-500/50' : 'bg-slate-800 hover:bg-rose-500/20 text-rose-400 border-slate-700 hover:border-rose-500/50'}`} title="Reject">
                                                     <ThumbsDown className="w-4 h-4" />
                                                 </button>
                                             </div>
                                         </td>
                                     </tr>
-                                )
+                                );
                             })}
                         </tbody>
                     </table>
@@ -512,11 +529,9 @@ const ResumeAnalyzer = ({ user }) => {
     if (!workspace) {
         return (
             <div className="h-full pt-10 pb-20">
-                {/* Hero Create Section */}
                 <div className="flex flex-col items-center justify-center p-12 bg-slate-900 border border-slate-800 rounded-3xl mb-12 text-center relative overflow-hidden">
                     <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-bl-full blur-3xl"></div>
                     <div className="absolute bottom-0 left-0 w-64 h-64 bg-purple-500/10 rounded-tr-full blur-3xl"></div>
-
                     <div className="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mb-6 relative z-10">
                         <BrainCircuit className="w-10 h-10 text-indigo-400" />
                     </div>
@@ -524,15 +539,11 @@ const ResumeAnalyzer = ({ user }) => {
                     <p className="text-slate-400 text-center max-w-lg mb-8 mx-auto relative z-10">
                         Create a dedicated workspace to batch process resumes against a specific job description. Our BERT semantic engine extracts metadata and ranks candidates based on deep contextual similarity.
                     </p>
-                    <button
-                        onClick={handleCreateWorkspace}
-                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-3 text-lg group mx-auto relative z-10"
-                    >
+                    <button onClick={handleCreateWorkspace} className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-3 text-lg group mx-auto relative z-10">
                         <Plus className="w-6 h-6 group-hover:rotate-90 transition-transform" /> Create New AI Workspace
                     </button>
                 </div>
 
-                {/* Saved Workspaces Grid */}
                 {isLoadingWorkspaces ? (
                     <div className="flex justify-center py-12">
                         <Loader2 className="w-8 h-8 text-indigo-500 animate-spin" />
@@ -571,7 +582,6 @@ const ResumeAnalyzer = ({ user }) => {
 
     return (
         <div className="space-y-8 pb-12">
-            {/* Workspace Header */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 bg-slate-900/50 p-6 rounded-2xl border border-slate-800 backdrop-blur-md">
                 <div>
                     <div className="flex items-center gap-2 text-indigo-400 text-sm font-bold tracking-wider mb-2">
@@ -584,29 +594,20 @@ const ResumeAnalyzer = ({ user }) => {
                 </button>
             </div>
 
-            {/* Internal Navigation Tabs */}
             <div className="flex gap-2 p-1.5 bg-slate-900/50 rounded-2xl border border-slate-800 overflow-x-auto custom-scrollbar">
                 {tabs.map(tab => {
                     const isActive = activeTab === tab.id;
                     const hasResults = tab.id === 'results' && analysisResults.length > 0;
                     return (
-                        <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-all whitespace-nowrap relative ${isActive
-                                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20'
-                                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-                                }`}
-                        >
+                        <button key={tab.id} onClick={() => setActiveTab(tab.id)} className={`flex items-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-all whitespace-nowrap relative ${isActive ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}>
                             <tab.icon className="w-4 h-4" />
                             {tab.label}
                             {hasResults && !isActive && <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>}
                         </button>
-                    )
+                    );
                 })}
             </div>
 
-            {/* Tab Content */}
             <div className="bg-slate-900/20 p-2 min-h-[400px]">
                 <AnimatePresence mode="wait">
                     <motion.div key={activeTab} {...fadeProps}>
@@ -623,21 +624,8 @@ const ResumeAnalyzer = ({ user }) => {
             {/* AI Insights & Resume Preview Modal */}
             <AnimatePresence>
                 {isModalOpen && selectedCandidate && (
-                    <motion.div
-                        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={closeCandidateModal}
-                    >
-                        <motion.div
-                            className="w-full max-w-6xl h-[85vh] bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row"
-                            initial={{ scale: 0.95, y: 20 }}
-                            animate={{ scale: 1, y: 0 }}
-                            exit={{ scale: 0.95, y: -20 }}
-                            onClick={e => e.stopPropagation()}
-                        >
-                            {/* Left Panel: Explainable AI Insights */}
+                    <motion.div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={closeCandidateModal}>
+                        <motion.div className="w-full max-w-6xl h-[85vh] bg-slate-900 border border-slate-700/50 rounded-2xl shadow-2xl overflow-hidden flex flex-col md:flex-row" initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: -20 }} onClick={e => e.stopPropagation()}>
                             <div className="w-full md:w-1/3 bg-slate-800/30 p-6 overflow-y-auto border-r border-slate-700/50 flex flex-col">
                                 <div className="flex justify-between items-start mb-6">
                                     <div>
@@ -651,60 +639,35 @@ const ResumeAnalyzer = ({ user }) => {
                                         <X className="w-5 h-5" />
                                     </button>
                                 </div>
-
                                 <div className="space-y-6 flex-1">
-                                    {/* Score Card */}
                                     <div className="bg-slate-900/50 border border-slate-700 p-5 rounded-2xl relative overflow-hidden">
                                         <div className={`absolute top-0 left-0 w-full h-1 bg-${getScoreLabel(selectedCandidate.matchScore).color}-500`}></div>
-                                        <div className="text-sm font-bold text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-2">
-                                            <BrainCircuit className="w-4 h-4" /> AI Match Analysis
-                                        </div>
+                                        <div className="text-sm font-bold text-slate-400 mb-2 uppercase tracking-wider flex items-center gap-2"><BrainCircuit className="w-4 h-4" /> AI Match Analysis</div>
                                         <div className="flex items-end gap-3">
-                                            <span className={`text-4xl font-black text-${getScoreLabel(selectedCandidate.matchScore).color}-400`}>
-                                                {selectedCandidate.matchScore}%
-                                            </span>
-                                            <span className={`text-sm font-bold pb-1 text-${getScoreLabel(selectedCandidate.matchScore).color}-400/80`}>
-                                                {getScoreLabel(selectedCandidate.matchScore).text}
-                                            </span>
+                                            <span className={`text-4xl font-black text-${getScoreLabel(selectedCandidate.matchScore).color}-400`}>{selectedCandidate.matchScore}%</span>
+                                            <span className={`text-sm font-bold pb-1 text-${getScoreLabel(selectedCandidate.matchScore).color}-400/80`}>{getScoreLabel(selectedCandidate.matchScore).text}</span>
                                         </div>
                                     </div>
-
-                                    {/* Matched Skills */}
                                     <div>
-                                        <h4 className="text-emerald-400 text-sm font-bold uppercase tracking-wider mb-3 flex items-center gap-2">
-                                            <CheckCircle2 className="w-4 h-4" /> Matched Requirements
-                                        </h4>
+                                        <h4 className="text-emerald-400 text-sm font-bold uppercase tracking-wider mb-3 flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> Matched Requirements</h4>
                                         <div className="flex flex-wrap gap-2">
                                             {selectedCandidate.extractedSkills?.length > 0 ? selectedCandidate.extractedSkills.map((s, i) => (
-                                                <span key={i} className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm font-medium">
-                                                    {s}
-                                                </span>
+                                                <span key={i} className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-lg text-sm font-medium">{s}</span>
                                             )) : <span className="text-slate-500 italic text-sm">No specific tech skills extracted.</span>}
                                         </div>
                                     </div>
-
-                                    {/* Missing Skills */}
                                     <div>
-                                        <h4 className="text-rose-400 text-sm font-bold uppercase tracking-wider mb-3 flex items-center gap-2">
-                                            <X className="w-4 h-4" /> Missing Expectations
-                                        </h4>
+                                        <h4 className="text-rose-400 text-sm font-bold uppercase tracking-wider mb-3 flex items-center gap-2"><X className="w-4 h-4" /> Missing Expectations</h4>
                                         <div className="flex flex-wrap gap-2">
                                             {selectedCandidate.missingSkills?.length > 0 ? selectedCandidate.missingSkills.map((s, i) => (
-                                                <span key={i} className="px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-sm font-medium">
-                                                    {s}
-                                                </span>
+                                                <span key={i} className="px-3 py-1.5 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-lg text-sm font-medium">{s}</span>
                                             )) : <span className="text-emerald-400 italic text-sm">All strictly required skills matched!</span>}
                                         </div>
                                     </div>
                                 </div>
-
-                                {/* Actions Base */}
                                 <div className="pt-6 border-t border-slate-700/50 space-y-3 mt-6">
                                     {selectedCandidate.candidateStatus !== 'Shortlisted' ? (
-                                        <button
-                                            onClick={() => { handleStatusChange(selectedCandidate.id, 'Shortlisted'); closeCandidateModal(); }}
-                                            className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl font-bold transition-all"
-                                        >
+                                        <button onClick={() => { handleStatusChange(selectedCandidate.id, 'Shortlisted'); closeCandidateModal(); }} className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl font-bold transition-all">
                                             <ThumbsUp className="w-5 h-5" /> Shortlist Candidate
                                         </button>
                                     ) : (
@@ -712,36 +675,22 @@ const ResumeAnalyzer = ({ user }) => {
                                             <CheckCircle2 className="w-5 h-5" /> Shortlisted
                                         </button>
                                     )}
-
                                     <div className="flex gap-3">
-                                        <button
-                                            onClick={() => { handleStatusChange(selectedCandidate.id, 'Rejected'); closeCandidateModal(); }}
-                                            className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-rose-500/10 border border-slate-700 hover:border-rose-500/30 text-slate-300 hover:text-rose-400 rounded-xl font-bold transition-all"
-                                        >
+                                        <button onClick={() => { handleStatusChange(selectedCandidate.id, 'Rejected'); closeCandidateModal(); }} className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-rose-500/10 border border-slate-700 hover:border-rose-500/30 text-slate-300 hover:text-rose-400 rounded-xl font-bold transition-all">
                                             <ThumbsDown className="w-5 h-5" /> Reject
                                         </button>
-                                        <a
-                                            href={getCandidateFileUrl(selectedCandidate.fileName)}
-                                            download={selectedCandidate.fileName}
-                                            className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-xl font-bold transition-all"
-                                        >
+                                        <a href={getCandidateFileUrl(selectedCandidate.fileName)} download={selectedCandidate.fileName} className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 rounded-xl font-bold transition-all">
                                             <Download className="w-5 h-5" /> PDF
                                         </a>
                                     </div>
                                 </div>
                             </div>
-
-                            {/* Right Panel: Resume Preview */}
                             <div className="w-full md:w-2/3 bg-[#323639] relative flex flex-col">
                                 <div className="p-3 bg-slate-900 border-b border-slate-700/50 flex items-center gap-2 text-slate-400 text-sm font-semibold">
                                     <FileBadge className="w-4 h-4" /> Original Resume Preview
                                 </div>
                                 {getCandidateFileUrl(selectedCandidate.fileName) ? (
-                                    <iframe
-                                        src={`${getCandidateFileUrl(selectedCandidate.fileName)}#toolbar=0`}
-                                        className="w-full flex-1 border-none"
-                                        title="Resume Preview"
-                                    />
+                                    <iframe src={`${getCandidateFileUrl(selectedCandidate.fileName)}#toolbar=0`} className="w-full flex-1 border-none" title="Resume Preview" />
                                 ) : (
                                     <div className="flex-1 flex items-center justify-center text-slate-500">
                                         Unable to load PDF preview from local memory.

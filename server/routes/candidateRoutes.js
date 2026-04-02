@@ -1,60 +1,53 @@
+// C:\Users\Yash\Desktop\HireMind\server\routes\candidateRoutes.js
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
-const FormData = require('form-data');
-const CandidateProfile = require('../models/CandidateProfile');
 
-// Configure Multer for PDF uploads
+const CandidateProfile = require('../models/CandidateProfile');
+const Job = require('../models/Job');
+const Application = require('../models/Application');
+
+// ===============================
+// MULTER CONFIG (for future resume upload if needed)
+// ===============================
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadDir = path.join(__dirname, '..', 'uploads');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
+        if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
         cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
-        cb(null, 'candidate-' + Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname));
+        cb(null, 'candidate-' + Date.now() + '-' + Math.round(Math.random() * 1e9) + path.extname(file.originalname));
     }
 });
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
 
-// @route   POST /api/candidate/profile
-// @desc    Upload resume, parse via Python AI, create/update CandidateProfile
+// ===============================
+// POST: /api/candidate/profile
+// Upload resume → Extract AI Data → Save Profile
+// ===============================
 router.post('/profile', upload.single('resume'), async (req, res) => {
     try {
-        const userId = req.body.userId; // Passed from frontend
-
-        if (!userId) {
-            return res.status(400).json({ message: 'User ID is required' });
-        }
-
-        if (!req.file) {
-            return res.status(400).json({ message: 'Please upload a resume (PDF)' });
-        }
+        const userId = req.body.userId;
+        if (!userId) return res.status(400).json({ message: 'User ID is required' });
+        if (!req.file) return res.status(400).json({ message: 'Please upload a resume (PDF)' });
 
         const absolutePath = path.resolve(req.file.path);
 
-        // 1. Call Python AI Service for metadata extraction
-        console.log(`Sending single resume to AI for extraction: ${absolutePath}`);
+        // Send resume to AI for extraction
         const aiResponse = await axios.post('http://127.0.0.1:5001/extract_resume', {
             resume_path: absolutePath
         });
-
         const aiData = aiResponse.data;
-
-        if (aiData.error) {
-            return res.status(500).json({ message: 'AI Extraction failed', error: aiData.error });
-        }
+        if (aiData.error) return res.status(500).json({ message: 'AI Extraction failed', error: aiData.error });
 
         const resumeUrl = `/uploads/${req.file.filename}`;
 
-        // 2. Create or Update Candidate Profile in DB
         let profile = await CandidateProfile.findOne({ userId });
-
         const updateData = {
             resumeUrl,
             extractedName: aiData.candidateName,
@@ -65,37 +58,26 @@ router.post('/profile', upload.single('resume'), async (req, res) => {
         };
 
         if (profile) {
-            // Update existing
-            profile = await CandidateProfile.findOneAndUpdate(
-                { userId },
-                { $set: updateData },
-                { new: true }
-            );
+            profile = await CandidateProfile.findOneAndUpdate({ userId }, { $set: updateData }, { new: true });
         } else {
-            // Create new
-            profile = new CandidateProfile({
-                userId,
-                ...updateData
-            });
+            profile = new CandidateProfile({ userId, ...updateData });
             await profile.save();
         }
 
         res.status(200).json({ message: 'Profile updated successfully', profile });
-
     } catch (error) {
         console.error('Candidate Profile Update Error:', error.message);
         res.status(500).json({ message: 'Server error during profile update' });
     }
 });
 
-// @route   GET /api/candidate/profile/:userId
-// @desc    Get candidate profile data
+// ===============================
+// GET: /api/candidate/profile/:userId
+// ===============================
 router.get('/profile/:userId', async (req, res) => {
     try {
         const profile = await CandidateProfile.findOne({ userId: req.params.userId });
-        if (!profile) {
-            return res.status(404).json({ message: 'Profile not found' });
-        }
+        if (!profile) return res.status(404).json({ message: 'Profile not found' });
         res.status(200).json(profile);
     } catch (error) {
         console.error(error);
@@ -103,13 +85,13 @@ router.get('/profile/:userId', async (req, res) => {
     }
 });
 
-// @route   PUT /api/candidate/profile/:userId
-// @desc    Manually update candidate profile details (experience, education, location)
+// ===============================
+// PUT: /api/candidate/profile/:userId
+// ===============================
 router.put('/profile/:userId', async (req, res) => {
     try {
-        // Allow updates to generic fields
         const { experience, education, location, extractedSkills } = req.body;
-        
+
         const updateFields = {};
         if (experience !== undefined) updateFields.experience = experience;
         if (education !== undefined) updateFields.education = education;
@@ -117,15 +99,12 @@ router.put('/profile/:userId', async (req, res) => {
         if (extractedSkills !== undefined) updateFields.extractedSkills = extractedSkills;
 
         const profile = await CandidateProfile.findOneAndUpdate(
-             { userId: req.params.userId },
-             { $set: updateFields },
-             { new: true }
+            { userId: req.params.userId },
+            { $set: updateFields },
+            { new: true }
         );
 
-        if (!profile) {
-            return res.status(404).json({ message: 'Profile not found' });
-        }
-
+        if (!profile) return res.status(404).json({ message: 'Profile not found' });
         res.status(200).json({ message: 'Profile updated', profile });
     } catch (error) {
         console.error(error);
@@ -133,42 +112,62 @@ router.put('/profile/:userId', async (req, res) => {
     }
 });
 
-// @route   POST /api/candidate/apply
-// @desc    Apply to a job using an ALREADY SAVED CandidateProfile resume
+// ===============================
+// POST: /api/candidate/apply
+// Apply to job + Generate AI Match Score
+// ===============================
 router.post('/apply', async (req, res) => {
     try {
         const { candidateId, jobId, resumePath } = req.body;
-        
+
         if (!candidateId || !jobId || !resumePath) {
             return res.status(400).json({ message: 'Missing required application fields' });
         }
 
-        // We require the Application model 
-        const Application = require('../models/Application');
-
         // Check if already applied
         const existingApp = await Application.findOne({ candidateId, jobId });
-        if (existingApp) {
-            return res.status(400).json({ message: 'You have already applied to this job' });
+        if (existingApp) return res.status(400).json({ message: 'You have already applied to this job' });
+
+        // Load job data for AI match
+        const job = await Job.findById(jobId);
+        if (!job) return res.status(404).json({ message: 'Job not found' });
+
+        // Normalize path for OS
+        const fullResumePath = path.resolve(path.join(__dirname, '..', resumePath.replace(/^\/+/, '')));
+
+        // ----- AI MATCH SCORE -----
+        let matchScore = 0;
+        let aiFeedback = '';
+        try {
+            console.log("Sending resume to Python AI for match score...");
+            const aiResponse = await axios.post("http://127.0.0.1:5001/analyze", {  // <-- fixed endpoint
+                resume_path: fullResumePath,
+                job_description: job.description,
+                required_skills: job.requiredSkills
+            });
+            matchScore = aiResponse.data.match_percentage ?? 0;
+            aiFeedback = aiResponse.data.feedback || '';
+        } catch (err) {
+            console.error('AI Match Score Error:', err.response?.data || err.message);
         }
 
-        // The resumePath here is technically a URL or a relative path from the profile.
-        // During recruiter analysis, the recruiter dashboard hits `/api/jobs/analyze-workspace` 
-        // with raw files. 
-        // Or if the recruiter opens the application list, they can hit the Python service.
-        // We just save the path provided by the profile.
-        const absolutePathForPythonContext = require('path').join(__dirname, '..', resumePath);
-
+        // Save application
         const application = new Application({
             candidateId,
             jobId,
-            resumePath: absolutePathForPythonContext, // Store absolute path for easy AI loading
-            status: 'applied'
+            resumePath,
+            status: 'applied',
+            matchScore,
+            aiFeedback,
+            appliedAt: new Date()
         });
 
         await application.save();
 
-        res.status(201).json({ message: 'Applied successfully!', application });
+        res.status(201).json({
+            message: "Applied successfully!",
+            application
+        });
 
     } catch (error) {
         console.error('Apply Error:', error);

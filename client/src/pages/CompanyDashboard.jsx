@@ -1,14 +1,13 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    LayoutDashboard, Briefcase, PlusSquare,
+    LayoutDashboard, PlusSquare,
     BrainCircuit, Settings, BarChart3, LogOut, ChevronRight
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 // Import View Components
 import Overview from '../components/dashboard/Overview';
-import ExploreJobs from '../components/dashboard/ExploreJobs';
 import JobManagement from '../components/dashboard/JobManagement';
 import ResumeAnalyzer from '../components/dashboard/ResumeAnalyzer';
 
@@ -26,12 +25,11 @@ const CompanyDashboard = () => {
 
     const handleLogout = () => {
         localStorage.removeItem('user');
-        navigate('/login');
+        navigate('/');
     };
 
     const navItems = [
         { id: 'overview', label: 'Dashboard Overview', icon: LayoutDashboard },
-        { id: 'explore', label: 'Explore Jobs', icon: Briefcase },
         { id: 'manage', label: 'Job Management', icon: PlusSquare },
         { id: 'analyzer', label: 'Resume Analyzer', icon: BrainCircuit, highlight: true },
         { id: 'analytics', label: 'Analytics', icon: BarChart3 },
@@ -41,7 +39,6 @@ const CompanyDashboard = () => {
     const renderSecondaryView = () => {
         switch (activeView) {
             case 'overview': return <Overview />;
-            case 'explore': return <ExploreJobs />;
             case 'manage': return <JobManagement user={user} />;
             case 'analyzer': return <ResumeAnalyzer user={user} />;
             case 'analytics': return <div className="text-slate-400">Analytics module coming soon...</div>;

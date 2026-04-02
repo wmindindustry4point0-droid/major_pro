@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Target, CheckCircle2, AlertCircle, AlertTriangle, Lightbulb } from 'lucide-react';
+import { Target, CheckCircle2, AlertCircle } from 'lucide-react';
 
 const MatchScore = () => {
     const [applications, setApplications] = useState([]);
@@ -15,8 +15,8 @@ const MatchScore = () => {
                     axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/applications/candidate/${user._id}`),
                     axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`).catch(() => ({ data: null }))
                 ]);
-                
-                // Only show applications that have been analyzed
+
+                // Use matchScore from backend directly
                 setApplications(appsRes.data.filter(app => app.matchScore != null));
                 setProfile(profileRes.data);
             } catch (error) {
@@ -36,7 +36,6 @@ const MatchScore = () => {
 
     const parseMissingSkills = (feedbackStr) => {
         if (!feedbackStr) return [];
-        // Extract "Missing skills: X, Y, Z."
         const match = feedbackStr.match(/Missing skills:\s*(.*)/i);
         if (match && match[1]) {
             let str = match[1].replace('None.', '').replace('.', '').trim();
@@ -62,7 +61,7 @@ const MatchScore = () => {
                     <Target className="w-16 h-16 text-slate-700 mx-auto mb-4" />
                     <h3 className="text-xl font-bold text-white mb-2">No AI Data Available</h3>
                     <p className="text-slate-500 max-w-md mx-auto">
-                        Your applications haven't been processed by the recruiter's BERT AI algorithm yet, or you haven't applied to any roles.
+                        Your applications haven't been processed by the AI algorithm yet, or you haven't applied to any roles.
                     </p>
                 </div>
             ) : (
@@ -72,14 +71,14 @@ const MatchScore = () => {
                         const missingSkills = parseMissingSkills(app.aiFeedback);
                         const jobSkills = app.jobId?.requiredSkills || [];
                         const candidateSkills = profile?.extractedSkills || [];
-                        
-                        // Approximate matched skills
+
+                        // Matched skills
                         const matchedSkills = jobSkills.filter(s => candidateSkills.some(cs => cs.toLowerCase() === s.toLowerCase()));
 
                         return (
                             <div key={app._id} className={`bg-slate-900 border ${scoreData.border} rounded-3xl p-8 relative overflow-hidden transition-all hover:shadow-xl ${scoreData.shadow}`}>
                                 <div className={`absolute top-0 right-0 w-64 h-64 ${scoreData.bg} opacity-5 rounded-bl-[150px] mix-blend-screen pointer-events-none`}></div>
-                                
+
                                 <div className="flex flex-col md:flex-row justify-between items-start gap-8 relative z-10">
                                     <div className="flex-1">
                                         <h3 className="text-2xl font-bold text-white mb-1">{app.jobId?.title}</h3>
@@ -118,7 +117,6 @@ const MatchScore = () => {
 
                                     <div className="w-full md:w-64 shrink-0 flex flex-col items-center justify-center p-8 bg-slate-950/50 border border-slate-800 rounded-2xl shadow-inner">
                                         <div className="relative w-32 h-32 flex items-center justify-center mb-4">
-                                            {/* Circular Progress Bar CSS trick */}
                                             <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                                                 <circle cx="50" cy="50" r="40" fill="transparent" stroke="rgba(30,41,59,0.5)" strokeWidth="8" />
                                                 <circle 

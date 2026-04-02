@@ -26,7 +26,6 @@ const Home = () => {
         <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-indigo-500/30">
 
             {/* SECTION 1 — NAVIGATION BAR */}
-            {/* Note: In App.jsx we'll need to hide the default Navbar on '/' route to let this one shine */}
             <nav className="fixed w-full top-0 z-50 bg-slate-900/80 backdrop-blur-md border-b border-slate-800">
                 <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -372,7 +371,7 @@ const Home = () => {
                                         </li>
                                     ))}
                                 </ul>
-                                <button onClick={() => openAuthModal('role')} className="inline-block w-full text-center py-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-all font-medium text-slate-300">
+                                <button onClick={() => openAuthModal('recruiter')} className="inline-block w-full text-center py-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-indigo-500 hover:border-indigo-500 hover:text-white transition-all font-medium text-slate-300">
                                     Create Company Account
                                 </button>
                             </div>
@@ -403,7 +402,7 @@ const Home = () => {
                                         </li>
                                     ))}
                                 </ul>
-                                <button onClick={() => openAuthModal('role')} className="inline-block w-full text-center py-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-purple-500 hover:border-purple-500 hover:text-white transition-all font-medium text-slate-300">
+                                <button onClick={() => openAuthModal('candidate')} className="inline-block w-full text-center py-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-purple-500 hover:border-purple-500 hover:text-white transition-all font-medium text-slate-300">
                                     Create Candidate Profile
                                 </button>
                             </div>
@@ -423,17 +422,17 @@ const Home = () => {
                         Use HireMind AI to automate resume screening and identify the best candidates instantly. Stop matching keywords, start matching context.
                     </p>
                     <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                        <button onClick={() => openAuthModal('role')} className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-4 px-8 rounded-xl transition-all shadow-lg shadow-indigo-500/25">
+                        <button onClick={() => openAuthModal('recruiter')} className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-4 px-8 rounded-xl transition-all shadow-lg shadow-indigo-500/25">
                             Access Recruiter Portal
                         </button>
-                        <button onClick={() => openAuthModal('role')} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white font-bold py-4 px-8 rounded-xl transition-all">
+                        <button onClick={() => openAuthModal('candidate')} className="bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white font-bold py-4 px-8 rounded-xl transition-all">
                             Access Candidate Portal
                         </button>
                     </div>
                 </div>
             </section>
 
-            {/* SECTION 10 — FOOTER (Refactored to omit specific names as requested) */}
+            {/* SECTION 10 — FOOTER */}
             <footer className="bg-slate-950 pt-16 pb-8 px-6 border-t border-slate-800">
                 <div className="max-w-7xl mx-auto grid md:grid-cols-2 gap-8 mb-12">
                     <div>
