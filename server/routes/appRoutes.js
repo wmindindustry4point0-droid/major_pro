@@ -63,22 +63,24 @@ router.post('/apply', upload.single('resume'), async (req, res) => {
 router.get('/job/:jobId', async (req, res) => {
     try {
         const applications = await Application.find({ jobId: req.params.jobId })
-            .populate('candidateId', 'name email');
+            .populate('candidateId', 'name email')
+            .sort({ appliedAt: -1 });
         res.json(applications);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Get Applications for a Candidate (My Applications)
+// Get Applications for a Candidate (My Applications) — sorted newest first
 router.get('/candidate/:candidateId', async (req, res) => {
     try {
         const applications = await Application.find({ candidateId: req.params.candidateId })
             .populate({
                 path: 'jobId',
-                select: 'title companyId',
+                select: 'title companyId requiredSkills', // ← FIXED: added requiredSkills
                 populate: { path: 'companyId', select: 'name companyName' }
-            });
+            })
+            .sort({ appliedAt: -1 });
         res.json(applications);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -145,7 +147,6 @@ router.patch('/:id/status', async (req, res) => {
                     status
                 });
             } catch (emailErr) {
-                // Don't fail the request if email fails — just log it
                 console.error('Email sending failed:', emailErr.message);
             }
         }

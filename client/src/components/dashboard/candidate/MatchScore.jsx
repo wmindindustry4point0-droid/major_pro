@@ -16,7 +16,6 @@ const MatchScore = () => {
                     axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`).catch(() => ({ data: null }))
                 ]);
 
-                // Use matchScore from backend directly
                 setApplications(appsRes.data.filter(app => app.matchScore != null));
                 setProfile(profileRes.data);
             } catch (error) {
@@ -40,9 +39,19 @@ const MatchScore = () => {
         if (match && match[1]) {
             let str = match[1].replace('None.', '').replace('.', '').trim();
             if (str === 'None' || str === '') return [];
-            return str.split(',').map(s => s.trim());
+            return str.split(',').map(s => s.trim()).filter(Boolean);
         }
         return [];
+    };
+
+    // Safely extract a skill string whether it's a plain string or an object like { name: "React" }
+    const extractSkillString = (skill) => {
+        if (!skill) return '';
+        if (typeof skill === 'string') return skill.trim();
+        if (typeof skill === 'object') {
+            return (skill.name || skill.skill || skill.label || Object.values(skill)[0] || '').toString().trim();
+        }
+        return String(skill).trim();
     };
 
     if (isLoading) {
@@ -69,11 +78,22 @@ const MatchScore = () => {
                     {applications.map(app => {
                         const scoreData = getScoreColor(app.matchScore);
                         const missingSkills = parseMissingSkills(app.aiFeedback);
-                        const jobSkills = app.jobId?.requiredSkills || [];
-                        const candidateSkills = profile?.extractedSkills || [];
 
-                        // Matched skills
-                        const matchedSkills = jobSkills.filter(s => candidateSkills.some(cs => cs.toLowerCase() === s.toLowerCase()));
+                        // Safely normalize both skill arrays to plain lowercase strings
+                        const jobSkills = (app.jobId?.requiredSkills || [])
+                            .map(extractSkillString)
+                            .filter(Boolean);
+
+                        const candidateSkills = (profile?.extractedSkills || [])
+                            .map(extractSkillString)
+                            .filter(Boolean);
+
+                        const candidateSkillsLower = candidateSkills.map(s => s.toLowerCase());
+
+                        // Match job required skills against candidate skills
+                        const matchedSkills = jobSkills.filter(s =>
+                            candidateSkillsLower.includes(s.toLowerCase())
+                        );
 
                         return (
                             <div key={app._id} className={`bg-slate-900 border ${scoreData.border} rounded-3xl p-8 relative overflow-hidden transition-all hover:shadow-xl ${scoreData.shadow}`}>
@@ -95,7 +115,15 @@ const MatchScore = () => {
                                                         <span key={skill} className="px-2.5 py-1 text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-lg">
                                                             {skill}
                                                         </span>
-                                                    )) : <span className="text-sm text-slate-500 italic">No exact skill matches detected.</span>}
+                                                    )) : (
+                                                        <span className="text-sm text-slate-500 italic">
+                                                            {jobSkills.length === 0
+                                                                ? 'No required skills listed for this job.'
+                                                                : candidateSkills.length === 0
+                                                                    ? 'No skills found in your profile.'
+                                                                    : 'No exact skill matches detected.'}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
 
@@ -119,12 +147,12 @@ const MatchScore = () => {
                                         <div className="relative w-32 h-32 flex items-center justify-center mb-4">
                                             <svg className="w-full h-full transform -rotate-90" viewBox="0 0 100 100">
                                                 <circle cx="50" cy="50" r="40" fill="transparent" stroke="rgba(30,41,59,0.5)" strokeWidth="8" />
-                                                <circle 
-                                                    cx="50" cy="50" r="40" 
-                                                    fill="transparent" 
-                                                    stroke="currentColor" 
-                                                    strokeWidth="8" 
-                                                    strokeDasharray="251.2" 
+                                                <circle
+                                                    cx="50" cy="50" r="40"
+                                                    fill="transparent"
+                                                    stroke="currentColor"
+                                                    strokeWidth="8"
+                                                    strokeDasharray="251.2"
                                                     strokeDashoffset={251.2 - (251.2 * app.matchScore) / 100}
                                                     strokeLinecap="round"
                                                     className={`${scoreData.text} transition-all duration-1000 ease-out`}
