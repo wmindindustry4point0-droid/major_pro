@@ -6,6 +6,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import CandidateDashboard from './pages/CandidateDashboard';
 import CompanyDashboard from './pages/CompanyDashboard';
+import OAuthCallback from './pages/OAuthCallback'; // ← ADDED
 
 // Protected Route Component
 const ProtectedRoute = ({ children, allowedRole }) => {
@@ -19,7 +20,7 @@ const AppContent = () => {
     const location = useLocation();
 
     // Hide the default Navbar on landing page and custom layout dashboards
-    const hideNavbarRoutes = ['/', '/company-dashboard', '/candidate-dashboard'];
+    const hideNavbarRoutes = ['/', '/company-dashboard', '/candidate-dashboard', '/oauth-callback'];
     const showDefaultNavbar = !hideNavbarRoutes.includes(location.pathname);
 
     return (
@@ -30,6 +31,7 @@ const AppContent = () => {
                     <Route path="/" element={<Home />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
+                    <Route path="/oauth-callback" element={<OAuthCallback />} /> {/* ← ADDED */}
 
                     <Route path="/candidate-dashboard" element={
                         <ProtectedRoute allowedRole="candidate">
