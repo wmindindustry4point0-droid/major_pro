@@ -24,13 +24,11 @@ if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY) {
         cloudinary: cloudinary,
         params: {
             folder: 'hiremind_resumes',
-            // We want to keep the original pdf format
             format: async (req, file) => 'pdf',
             public_id: (req, file) => Date.now() + '-' + Math.round(Math.random() * 1E9),
         },
     });
 } else {
-    // Local File Storage Fallback for Development
     storage = multer.diskStorage({
         destination: function (req, file, cb) {
             const uploadDir = path.join(__dirname, '..', 'uploads');
