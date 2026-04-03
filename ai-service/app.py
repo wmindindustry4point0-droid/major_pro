@@ -10,37 +10,24 @@ import io
 app = Flask(__name__)
 CORS(app)
 
-# Load the BERT Contextual Model lazily or at startup
-# "all-MiniLM-L6-v2" is extremely fast and effective for semantic similarity
-model = None
-stop_words = None
+# ---------------------------------------------------------------
+# EAGER LOADING — Model and stopwords load at startup, not on
+# first request. This eliminates the "slow first click" delay.
+# ---------------------------------------------------------------
+import nltk
+from nltk.corpus import stopwords
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
-def get_stop_words():
-    global stop_words
-    if stop_words is None:
-        import nltk
-        from nltk.corpus import stopwords
-        nltk.download('stopwords', quiet=True)
-        stop_words = set(stopwords.words('english'))
-    return stop_words
-
-def get_model():
-    global model
-    if model is None:
-        print("Loading BERT Model lazily...")
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer('all-MiniLM-L6-v2')
-        print("BERT Model Loaded.")
-    return model
-
-def get_cosine_similarity():
-    from sklearn.metrics.pairwise import cosine_similarity
-    return cosine_similarity
+print("Loading BERT Model at startup...")
+nltk.download('stopwords', quiet=True)
+stop_words = set(stopwords.words('english'))
+model = SentenceTransformer('all-MiniLM-L6-v2')
+print("BERT Model Loaded. Server is ready.")
 
 # -------------------------------------------------------------
 # SKILL DICTIONARY (For Robust Metadata Extraction)
 # -------------------------------------------------------------
-# Rather than relying purely on regex, we scan against these known entities
 TECH_SKILLS = [
     "python", "java", "javascript", "c++", "c#", "ruby", "go", "rust", "php", "typescript",
     "react", "angular", "vue", "node.js", "express", "django", "flask", "spring",
@@ -55,13 +42,11 @@ def extract_text_from_pdf(pdf_path_or_url):
     import pdfplumber
     text = ""
     try:
-        # Check if it's a URL
         if pdf_path_or_url.startswith('http://') or pdf_path_or_url.startswith('https://'):
             response = requests.get(pdf_path_or_url)
-            response.raise_for_status() # Raise exception for bad status codes
+            response.raise_for_status()
             pdf_file = io.BytesIO(response.content)
         else:
-            # It's a local file path
             pdf_file = pdf_path_or_url
 
         with pdfplumber.open(pdf_file) as pdf:
@@ -80,15 +65,14 @@ def extract_metadata(text):
     email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     email = email_match.group(0) if email_match else "Not Found"
 
-    # 2. Phone Extraction (handles various formats)
+    # 2. Phone Extraction
     phone_match = re.search(r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
     phone = phone_match.group(0) if phone_match else "Not Found"
 
-    # 3. Candidate Name Approximation (assuming top lines usually contain the name)
+    # 3. Candidate Name Approximation
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     name = "Candidate"
     if lines:
-        # Avoid lines that look like emails or numbers
         for limit in range(min(5, len(lines))):
             potential_name = lines[limit]
             if len(potential_name.split()) <= 4 and '@' not in potential_name and not any(char.isdigit() for char in potential_name):
@@ -99,12 +83,10 @@ def extract_metadata(text):
     text_lower = text.lower()
     extracted_skills = []
     for skill in TECH_SKILLS:
-        # Word boundary regex to ensure exact match (e.g., 'go' shouldn't match 'good')
         pattern = r'\b' + re.escape(skill) + r'\b'
         if re.search(pattern, text_lower):
             extracted_skills.append(skill)
-            
-    # Sort length ascending to present nicer
+
     extracted_skills.sort()
 
     return {
@@ -115,14 +97,11 @@ def extract_metadata(text):
     }
 
 def preprocess_text(text):
-    """Cleans text for optimal embeddings reading: lowercase, no punctuation, no stopwords."""
+    """Cleans text for optimal embeddings: lowercase, no punctuation, no stopwords."""
     text = text.lower()
-    # Remove punctuation
     text = text.translate(str.maketrans('', '', string.punctuation))
-    # Remove stopwords
-    sw = get_stop_words()
     words = text.split()
-    cleaned_words = [w for w in words if w not in sw]
+    cleaned_words = [w for w in words if w not in stop_words]
     return " ".join(cleaned_words)
 
 @app.route('/analyze', methods=['POST'])
@@ -144,7 +123,7 @@ def analyze():
 
     metadata = extract_metadata(raw_text)
     candidate_skills = set([s.lower() for s in metadata['skills']])
-    
+
     missing_skills = []
     if required_skills:
         req_set = set([s.lower() for s in required_skills])
@@ -152,12 +131,10 @@ def analyze():
 
     clean_resume = preprocess_text(raw_text)
     clean_jd = preprocess_text(job_description)
-    
-    m = get_model()
-    cos_sim_func = get_cosine_similarity()
-    resume_embedding = m.encode([clean_resume])
-    jd_embedding = m.encode([clean_jd])
-    similarity = cos_sim_func(resume_embedding, jd_embedding)[0][0]
+
+    resume_embedding = model.encode([clean_resume])
+    jd_embedding = model.encode([clean_jd])
+    similarity = cosine_similarity(resume_embedding, jd_embedding)[0][0]
     match_score = round(float(similarity) * 100, 1)
 
     return jsonify({
@@ -169,7 +146,7 @@ def analyze():
 @app.route('/extract_resume', methods=['POST'])
 def extract_resume():
     """
-    Extracts structured metadata (Name, Email, Phone, Skills) from a single 
+    Extracts structured metadata (Name, Email, Phone, Skills) from a single
     candidate resume without requiring a Job Description comparison.
     """
     data = request.json
@@ -181,12 +158,10 @@ def extract_resume():
     if not (r_path.startswith('http://') or r_path.startswith('https://')) and not os.path.exists(r_path):
         return jsonify({"error": "File not found"}), 400
 
-    # Pipeline Step 1: Text Extraction
     raw_text = extract_text_from_pdf(r_path)
     if not raw_text.strip():
         return jsonify({"error": "No parseable text"}), 400
 
-    # Pipeline Step 2: Metadata Extractor
     metadata = extract_metadata(raw_text)
 
     return jsonify({
@@ -200,22 +175,19 @@ def extract_resume():
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
     """
-    Receives a batch of resume file paths, the job description, and strictly required skills.
+    Receives a batch of resume file paths, the job description, and required skills.
     Processes them via the Pipeline and returns rankings.
     """
     data = request.json
-    resumes = data.get('resumes', []) # List of { id, path, fileName }
+    resumes = data.get('resumes', [])
     job_description = data.get('job_description', "")
-    required_skills = data.get('required_skills', []) # List of strings
+    required_skills = data.get('required_skills', [])
 
     if not resumes or not job_description:
         return jsonify({"error": "Missing resumes batch or job description."}), 400
 
-    # Clean the JD
     clean_jd = preprocess_text(job_description)
-    # Generate JD Embedding (1 x 384 vector)
-    m = get_model()
-    jd_embedding = m.encode([clean_jd])
+    jd_embedding = model.encode([clean_jd])
 
     results = []
 
@@ -226,39 +198,30 @@ def analyze_batch():
 
         if not (r_path.startswith('http://') or r_path.startswith('https://')) and not os.path.exists(r_path):
             results.append({
-                "id": r_id, "fileName": r_fileName, 
+                "id": r_id, "fileName": r_fileName,
                 "status": "Failed", "error": "File not found"
             })
             continue
 
-        # Pipeline Step 1: Text Extraction
         raw_text = extract_text_from_pdf(r_path)
         if not raw_text.strip():
             results.append({
-                "id": r_id, "fileName": r_fileName, 
+                "id": r_id, "fileName": r_fileName,
                 "status": "Failed", "error": "No parseable text"
             })
             continue
 
-        # Pipeline Step 2: Metadata & Skill Extraction
         metadata = extract_metadata(raw_text)
         candidate_skills = set([s.lower() for s in metadata['skills']])
-        
-        # Skill Gap Analysis
+
         missing_skills = []
         if required_skills:
             req_set = set([s.lower() for s in required_skills])
             missing_skills = list(req_set - candidate_skills)
 
-        # Pipeline Step 3: Text Preprocessing
         clean_resume = preprocess_text(raw_text)
-
-        # Pipeline Step 4 & 5: BERT Embeddings & Cosine Similarity
-        cos_sim_func = get_cosine_similarity()
-        resume_embedding = m.encode([clean_resume])
-        similarity = cos_sim_func(resume_embedding, jd_embedding)[0][0]
-        
-        # Convert similarity to a 0-100 percentage
+        resume_embedding = model.encode([clean_resume])
+        similarity = cosine_similarity(resume_embedding, jd_embedding)[0][0]
         match_score = round(float(similarity) * 100, 1)
 
         results.append({
@@ -273,13 +236,11 @@ def analyze_batch():
             "matchScore": match_score
         })
 
-    # Sort candidates by Match Score (Descending)
     successful_results = [r for r in results if r['status'] == 'Success']
     failed_results = [r for r in results if r['status'] == 'Failed']
-    
+
     successful_results.sort(key=lambda x: x['matchScore'], reverse=True)
 
-    # Assign dynamic rank
     for index, r in enumerate(successful_results):
         r['rank'] = index + 1
 
@@ -288,5 +249,4 @@ def analyze_batch():
     return jsonify({"analyzed_candidates": final_response})
 
 if __name__ == '__main__':
-    # Run heavily optimized on local for fast testing
     app.run(port=5001, debug=True, use_reloader=False)
