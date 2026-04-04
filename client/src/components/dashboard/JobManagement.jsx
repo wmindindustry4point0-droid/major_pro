@@ -370,7 +370,7 @@ const JobManagement = ({ user }) => {
 
                                                     {/* Resume link */}
                                                     <td className="px-6 py-4">
-                                                        <a href={app.resumePath} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium transition-colors">
+                                                        <a href={app.resumeSignedUrl || app.resumePath} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-medium transition-colors">
                                                             <ExternalLink className="w-3 h-3" /> View PDF
                                                         </a>
                                                     </td>

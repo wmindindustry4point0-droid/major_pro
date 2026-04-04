@@ -17,9 +17,10 @@ const ResumeProfile = () => {
     }, []);
 
     const fetchProfile = async () => {
-        try {
-            const res = await axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`);
-            setProfile(res.data);
+    try {
+        const res = await axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`);
+        console.log("resumeUrl:", res.data.resumeUrl); // ← ADD THIS LINE
+        setProfile(res.data);
         } catch (error) {
             console.log("No profile yet or error:", error);
         } finally {
@@ -158,7 +159,7 @@ const ResumeProfile = () => {
                                     <Briefcase className="w-4 h-4" /> View Original Resume
                                 </h4>
                                 <a 
-                                    href={`${import.meta.env.VITE_API_URL || "http://localhost:5000"}${profile.resumeUrl}`} 
+                                    href={profile.resumeUrl} 
                                     target="_blank" 
                                     rel="noopener noreferrer"
                                     className="text-indigo-400 hover:text-indigo-300 font-semibold text-sm underline underline-offset-4"

@@ -190,8 +190,13 @@ router.post('/apply', async (req, res) => {
         const job = await Job.findById(jobId);
         if (!job) return res.status(404).json({ message: 'Job not found' });
 
+        // Strip full S3 URL down to just the key if frontend sent the full URL
+        const s3Key = resumePath.includes('amazonaws.com')
+            ? new URL(resumePath.split('?')[0]).pathname.slice(1)
+            : resumePath;
+
         // Download resume from S3 for AI analysis
-        tmpPath = await downloadS3ToTemp(resumePath);
+        tmpPath = await downloadS3ToTemp(s3Key);
 
         let matchScore = 0;
         let aiFeedback = '';
@@ -210,7 +215,7 @@ router.post('/apply', async (req, res) => {
         const application = new Application({
             candidateId,
             jobId,
-            resumePath,        // store S3 key (not a local path)
+            resumePath: s3Key,  // store clean S3 key (not full URL)
             status: 'applied',
             matchScore,
             aiFeedback,
