@@ -24,10 +24,10 @@ router.post('/send-otp', async (req, res) => {
         return res.status(400).json({ error: 'All fields are required.' });
     if (password.length < 6)
         return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    const existing = await User.findOne({ email: email.toLowerCase().trim() });
-    if (existing)
-        return res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
     try {
+        const existing = await User.findOne({ email: email.toLowerCase().trim() });
+        if (existing)
+            return res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
         const otp = await saveOtp(email.toLowerCase().trim(), 'register');
         await sendOtpEmail({ toEmail: email, otp, purpose: 'register', name });
         res.json({ message: 'OTP sent to your email. Valid for 10 minutes.' });
@@ -72,9 +72,10 @@ router.post('/verify-register', async (req, res) => {
 router.post('/send-login-otp', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required.' });
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
-    if (!user) return res.status(404).json({ error: 'No account found with this email.' });
     try {
+        // FIX: User.findOne moved inside try/catch so DB errors are properly handled
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        if (!user) return res.status(404).json({ error: 'No account found with this email.' });
         const otp = await saveOtp(email.toLowerCase().trim(), 'login');
         await sendOtpEmail({ toEmail: email, otp, purpose: 'login', name: user.name });
         res.json({ message: 'OTP sent to your email. Valid for 10 minutes.' });
@@ -123,6 +124,7 @@ router.post('/login', async (req, res) => {
 });
 
 // CLASSIC REGISTER → returns JWT
+// FIX: isEmailVerified explicitly set to false (consistent, honest default)
 router.post('/register', async (req, res) => {
     const { name, email, password, role, companyName } = req.body;
     try {
@@ -136,7 +138,8 @@ router.post('/register', async (req, res) => {
             email: email.toLowerCase().trim(),
             password: hashedPassword,
             role,
-            companyName: role === 'company' ? companyName?.trim() : ''
+            companyName: role === 'company' ? companyName?.trim() : '',
+            isEmailVerified: false
         });
         await user.save();
         const token = signToken(user);

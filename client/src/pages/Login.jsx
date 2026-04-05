@@ -19,12 +19,11 @@ const Login = () => {
                 formData
             );
 
-            // Store token + user
             localStorage.setItem('token', res.data.token);
             localStorage.setItem('user', JSON.stringify(res.data.user));
 
-            // Correct role checking
-            if (res.data.user.role === 'recruiter') {
+            // FIX: was checking 'recruiter' which never exists — correct role is 'company'
+            if (res.data.user.role === 'company') {
                 navigate('/company-dashboard');
             } else {
                 navigate('/candidate-dashboard');

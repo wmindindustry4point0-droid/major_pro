@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'hiremind_jwt_secret_change_in_prod';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET environment variable is not set. Server cannot start safely.');
 
 // Middleware: verify JWT and attach user to req.user
 const requireAuth = (req, res, next) => {

@@ -11,7 +11,7 @@ const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
-// ── S3 setup (single storage backend for all file uploads) ───────────────────
+// ── S3 setup ─────────────────────────────────────────────────────────────────
 const s3 = new S3Client({
     region: process.env.AWS_REGION || 'us-east-1',
     credentials: {
@@ -36,10 +36,9 @@ const upload = multer({
         if (file.mimetype === 'application/pdf') cb(null, true);
         else cb(new Error('Only PDF files are allowed'), false);
     },
-    limits: { fileSize: 10 * 1024 * 1024 } // 10MB for batch uploads
+    limits: { fileSize: 10 * 1024 * 1024 }
 });
 
-// Helper: generate signed URL so AI service can fetch the PDF
 async function getS3SignedUrl(s3Key, expiresIn = 300) {
     const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key });
     return await getSignedUrl(s3, command, { expiresIn });
@@ -60,7 +59,7 @@ router.post('/', requireAuth, requireRole('company'), async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Get All Jobs (public — candidates browse jobs)
+// Get All Jobs (public)
 // GET /api/jobs
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
@@ -78,6 +77,9 @@ router.get('/', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/analyze-fit', requireAuth, requireRole('candidate'), upload.single('resume'), async (req, res) => {
     try {
+        // FIX: guard against missing file before accessing req.file.key
+        if (!req.file) return res.status(400).json({ error: 'Resume file is required.' });
+
         const { jobDescription, requiredSkills } = req.body;
         const s3Key = req.file.key;
 
@@ -85,7 +87,6 @@ router.post('/analyze-fit', requireAuth, requireRole('candidate'), upload.single
         try { skills = JSON.parse(requiredSkills); }
         catch (e) { skills = requiredSkills ? requiredSkills.split(',') : []; }
 
-        // Pass signed URL to AI — no Cloudinary needed
         const signedUrl = await getS3SignedUrl(s3Key);
 
         try {
@@ -123,7 +124,6 @@ router.post('/analyze-workspace', requireAuth, requireRole('company'), upload.ar
         try { skills = JSON.parse(requiredSkills); }
         catch (e) { if (requiredSkills) skills = requiredSkills.split(','); }
 
-        // Generate signed URLs for each uploaded file so AI can fetch them
         const resumesPayload = await Promise.all(req.files.map(async (file, index) => ({
             id: `temp_req_${Date.now()}_${index}`,
             path: await getS3SignedUrl(file.key),
@@ -164,7 +164,6 @@ router.post('/workspaces', requireAuth, requireRole('company'), async (req, res)
 });
 
 router.get('/workspaces/:companyId', requireAuth, requireRole('company'), async (req, res) => {
-    // Enforce ownership
     if (req.user._id.toString() !== req.params.companyId) {
         return res.status(403).json({ error: 'Access denied.' });
     }
@@ -176,11 +175,18 @@ router.get('/workspaces/:companyId', requireAuth, requireRole('company'), async 
     }
 });
 
+// FIX: added ownership check — any company could previously overwrite another company's workspace
 router.put('/workspaces/:id', requireAuth, requireRole('company'), async (req, res) => {
     try {
-        const workspace = await AIWorkspace.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        const workspace = await AIWorkspace.findById(req.params.id);
         if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
-        res.json(workspace);
+
+        if (workspace.companyId.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ error: 'Access denied. You do not own this workspace.' });
+        }
+
+        const updated = await AIWorkspace.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        res.json(updated);
     } catch (err) {
         res.status(400).json({ error: err.message });
     }

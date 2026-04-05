@@ -6,6 +6,8 @@ const session = require('express-session');
 
 dotenv.config();
 
+if (!process.env.SESSION_SECRET) throw new Error('SESSION_SECRET environment variable is not set. Server cannot start safely.');
+
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -31,11 +33,11 @@ app.use('/uploads', express.static('uploads'));
 
 // Session middleware — secure flag must be false in development (HTTP)
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'hiremind_secret_key',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
     cookie: {
-        secure: process.env.NODE_ENV === 'production', // fixed: was always true, broke localhost
+        secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
     }
