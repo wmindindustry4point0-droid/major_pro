@@ -19,21 +19,21 @@ const OAuthCallback = () => {
                 return;
             }
 
-            const user = JSON.parse(atob(data));
-            console.log('OAuthCallback: user decoded successfully', user);
+            const parsed = JSON.parse(atob(data));
+            console.log('OAuthCallback: decoded successfully', parsed);
 
-            localStorage.setItem('user', JSON.stringify(user));
+            localStorage.setItem('token', parsed.token);
+            localStorage.setItem('user', JSON.stringify(parsed.user));
 
-            // Small timeout ensures React Router is fully mounted before navigating
             setTimeout(() => {
                 navigate(
-                    user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard',
+                    parsed.user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard',
                     { replace: true }
                 );
             }, 100);
 
         } catch (err) {
-            console.error('OAuthCallback: failed to parse user data', err);
+            console.error('OAuthCallback: failed to parse data', err);
             navigate('/', { replace: true });
         }
     }, [navigate]);
