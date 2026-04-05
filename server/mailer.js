@@ -1,10 +1,12 @@
 const nodemailer = require('nodemailer');
 
 const transporter = nodemailer.createTransport({
-    service: 'gmail',
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    secure: false,
     auth: {
-        user: process.env.GMAIL_USER,
-        pass: process.env.GMAIL_APP_PASSWORD
+        user: process.env.BREVO_SMTP_USER,
+        pass: process.env.BREVO_SMTP_PASS
     }
 });
 
@@ -30,13 +32,11 @@ const sendOtpEmail = async ({ toEmail, otp, purpose, name }) => {
                     ? 'Use the OTP below to verify your email and complete your HireMind registration.'
                     : 'Use the OTP below to log in to your HireMind account.'}
             </p>
-
             <div style="background: #1e293b; border: 2px solid #4f46e5; border-radius: 16px; padding: 28px; margin: 28px 0; text-align: center;">
                 <p style="margin: 0 0 8px; color: #94a3b8; font-size: 13px; text-transform: uppercase; letter-spacing: 2px;">Your One-Time Password</p>
                 <p style="margin: 0; font-size: 48px; font-weight: bold; letter-spacing: 12px; color: #a5b4fc; font-family: monospace;">${otp}</p>
                 <p style="margin: 12px 0 0; color: #64748b; font-size: 13px;">⏱ Valid for 10 minutes</p>
             </div>
-
             <p style="color: #64748b; font-size: 13px;">If you didn't request this, you can safely ignore this email.</p>
             <p style="color: #64748b; font-size: 13px; margin-top: 32px; border-top: 1px solid #1e293b; padding-top: 20px;">
                 This is an automated message from HireMind AI. Do not reply to this email.
@@ -45,7 +45,7 @@ const sendOtpEmail = async ({ toEmail, otp, purpose, name }) => {
     </div>`;
 
     await transporter.sendMail({
-        from: `"HireMind AI" <${process.env.GMAIL_USER}>`,
+        from: `"HireMind AI" <${process.env.BREVO_SMTP_USER}>`,
         to: toEmail,
         subject,
         html
@@ -54,7 +54,7 @@ const sendOtpEmail = async ({ toEmail, otp, purpose, name }) => {
     console.log(`OTP email sent to ${toEmail} — purpose: ${purpose}`);
 };
 
-// ─── Status Email (existing) ──────────────────────────────────────────────────
+// ─── Status Email ─────────────────────────────────────────────────────────────
 const sendStatusEmail = async ({ toEmail, candidateName, jobTitle, companyName, status }) => {
     const isAccepted = status === 'shortlisted';
 
@@ -101,7 +101,7 @@ const sendStatusEmail = async ({ toEmail, candidateName, jobTitle, companyName, 
         </div>`;
 
     await transporter.sendMail({
-        from: `"HireMind AI" <${process.env.GMAIL_USER}>`,
+        from: `"HireMind AI" <${process.env.BREVO_SMTP_USER}>`,
         to: toEmail,
         subject,
         html
