@@ -2,33 +2,48 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const session = require('express-session'); // ← ADD
+const session = require('express-session');
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+// Allow all Vercel preview URLs + production URL
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://major-pro-omega.vercel.app',
+    process.env.CLIENT_URL,
+].filter(Boolean);
+
 app.use(cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: function (origin, callback) {
+        // Allow requests with no origin (mobile apps, curl, etc.)
+        if (!origin) return callback(null, true);
+        // Allow any vercel.app subdomain
+        if (origin.endsWith('.vercel.app') || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        callback(new Error('Not allowed by CORS'));
+    },
     credentials: true
 }));
+
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
-// Session middleware — required for Passport OAuth handshake (state verification)
+// Session middleware
 app.use(session({
     secret: process.env.SESSION_SECRET || 'hiremind_secret_key',
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false } // set to true in production with HTTPS
+    cookie: { secure: true } // true since we're on HTTPS in production
 }));
 
 // Passport (Google OAuth)
 const passport = require('./passport');
 app.use(passport.initialize());
-app.use(passport.session()); // ← ADD (needed for OAuth state verification)
+app.use(passport.session());
 
 // Database Connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/resume-screener')
