@@ -50,7 +50,7 @@ const AppContent = () => {
                     <Route
                         path="/company-dashboard"
                         element={
-                            <ProtectedRoute allowedRole="recruiter">
+                            <ProtectedRoute allowedRole="company">
                                 <CompanyDashboard />
                             </ProtectedRoute>
                         }
