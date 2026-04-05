@@ -1,14 +1,44 @@
-const nodemailer = require('nodemailer');
+const https = require('https');
 
-const transporter = nodemailer.createTransport({
-    host: 'smtp-relay.brevo.com',
-    port: 587,
-    secure: false,
-    auth: {
-        user: process.env.BREVO_SMTP_USER,
-        pass: process.env.BREVO_SMTP_PASS
-    }
-});
+// Send email via Brevo HTTP API (not SMTP — works on Render free tier)
+const sendBrevoEmail = ({ toEmail, toName, subject, html }) => {
+    return new Promise((resolve, reject) => {
+        const body = JSON.stringify({
+            sender: { name: 'HireMind AI', email: process.env.BREVO_SENDER_EMAIL },
+            to: [{ email: toEmail, name: toName || toEmail }],
+            subject,
+            htmlContent: html
+        });
+
+        const options = {
+            hostname: 'api.brevo.com',
+            path: '/v3/smtp/email',
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'api-key': process.env.BREVO_API_KEY,
+                'Content-Length': Buffer.byteLength(body)
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode >= 200 && res.statusCode < 300) {
+                    resolve(data);
+                } else {
+                    reject(new Error(`Brevo API error: ${res.statusCode} ${data}`));
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.write(body);
+        req.end();
+    });
+};
 
 // ─── OTP Email ────────────────────────────────────────────────────────────────
 const sendOtpEmail = async ({ toEmail, otp, purpose, name }) => {
@@ -38,19 +68,10 @@ const sendOtpEmail = async ({ toEmail, otp, purpose, name }) => {
                 <p style="margin: 12px 0 0; color: #64748b; font-size: 13px;">⏱ Valid for 10 minutes</p>
             </div>
             <p style="color: #64748b; font-size: 13px;">If you didn't request this, you can safely ignore this email.</p>
-            <p style="color: #64748b; font-size: 13px; margin-top: 32px; border-top: 1px solid #1e293b; padding-top: 20px;">
-                This is an automated message from HireMind AI. Do not reply to this email.
-            </p>
         </div>
     </div>`;
 
-    await transporter.sendMail({
-        from: `"HireMind AI" <${process.env.BREVO_SMTP_USER}>`,
-        to: toEmail,
-        subject,
-        html
-    });
-
+    await sendBrevoEmail({ toEmail, toName: name, subject, html });
     console.log(`OTP email sent to ${toEmail} — purpose: ${purpose}`);
 };
 
@@ -67,47 +88,28 @@ const sendStatusEmail = async ({ toEmail, candidateName, jobTitle, companyName, 
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; border-radius: 16px; overflow: hidden;">
             <div style="background: linear-gradient(135deg, #4f46e5, #7c3aed); padding: 40px 32px; text-align: center;">
                 <h1 style="margin: 0; font-size: 28px; color: #ffffff;">🎉 You've Been Accepted!</h1>
-                <p style="margin: 8px 0 0; color: #c7d2fe; font-size: 16px;">HireMind AI — Application Update</p>
             </div>
             <div style="padding: 36px 32px;">
                 <p style="font-size: 18px; color: #e2e8f0;">Hi <strong style="color: #a5b4fc;">${candidateName}</strong>,</p>
-                <p style="color: #94a3b8; line-height: 1.7; font-size: 15px;">
-                    Great news! <strong style="color: #ffffff;">${companyName}</strong> has reviewed your application for the 
-                    <strong style="color: #ffffff;">${jobTitle}</strong> position and decided to move you forward.
-                </p>
-                <div style="background: #1e293b; border: 1px solid #22c55e33; border-left: 4px solid #22c55e; border-radius: 12px; padding: 20px 24px; margin: 24px 0;">
-                    <p style="margin: 0; color: #4ade80; font-weight: bold; font-size: 16px;">✅ Application Status: Accepted</p>
+                <p style="color: #94a3b8; line-height: 1.7;">Great news! <strong style="color: #ffffff;">${companyName}</strong> has moved you forward for <strong style="color: #ffffff;">${jobTitle}</strong>.</p>
+                <div style="background: #1e293b; border-left: 4px solid #22c55e; border-radius: 12px; padding: 20px 24px; margin: 24px 0;">
+                    <p style="margin: 0; color: #4ade80; font-weight: bold;">✅ Application Status: Accepted</p>
                 </div>
-                <p style="color: #64748b; font-size: 13px; margin-top: 32px; border-top: 1px solid #1e293b; padding-top: 20px;">
-                    This is an automated message from HireMind AI.
-                </p>
             </div>
         </div>`
         : `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0f172a; color: #e2e8f0; border-radius: 16px; overflow: hidden;">
-            <div style="background: #1e293b; padding: 40px 32px; text-align: center; border-bottom: 1px solid #334155;">
+            <div style="background: #1e293b; padding: 40px 32px; text-align: center;">
                 <h1 style="margin: 0; font-size: 24px; color: #e2e8f0;">Application Update</h1>
             </div>
             <div style="padding: 36px 32px;">
                 <p style="font-size: 18px; color: #e2e8f0;">Hi <strong style="color: #a5b4fc;">${candidateName}</strong>,</p>
-                <p style="color: #94a3b8; line-height: 1.7; font-size: 15px;">
-                    Thank you for applying to <strong>${jobTitle}</strong> at <strong>${companyName}</strong>. 
-                    The team has decided not to move forward at this time.
-                </p>
-                <p style="color: #64748b; font-size: 13px; margin-top: 32px; border-top: 1px solid #1e293b; padding-top: 20px;">
-                    This is an automated message from HireMind AI.
-                </p>
+                <p style="color: #94a3b8;">Thank you for applying to <strong>${jobTitle}</strong> at <strong>${companyName}</strong>. The team has decided not to move forward at this time.</p>
             </div>
         </div>`;
 
-    await transporter.sendMail({
-        from: `"HireMind AI" <${process.env.BREVO_SMTP_USER}>`,
-        to: toEmail,
-        subject,
-        html
-    });
-
-    console.log(`Email sent to ${toEmail} — status: ${status}`);
+    await sendBrevoEmail({ toEmail, toName: candidateName, subject, html });
+    console.log(`Status email sent to ${toEmail} — status: ${status}`);
 };
 
 module.exports = { sendOtpEmail, sendStatusEmail };
