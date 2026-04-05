@@ -11,13 +11,18 @@ import OAuthCallback from './pages/OAuthCallback';
 const ProtectedRoute = ({ children, allowedRole }) => {
     const user = JSON.parse(localStorage.getItem('user'));
     const token = localStorage.getItem('token');
+
     if (!user || !token) return <Navigate to="/" />;
+
+    // FIXED: backend sends "recruiter" not "company"
     if (allowedRole && user.role !== allowedRole) return <Navigate to="/" />;
+
     return children;
 };
 
 const AppContent = () => {
     const location = useLocation();
+
     const hideNavbarRoutes = ['/', '/company-dashboard', '/candidate-dashboard', '/oauth-callback'];
     const showDefaultNavbar = !hideNavbarRoutes.includes(location.pathname);
 
@@ -30,16 +35,26 @@ const AppContent = () => {
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
                     <Route path="/oauth-callback" element={<OAuthCallback />} />
-                    <Route path="/candidate-dashboard" element={
-                        <ProtectedRoute allowedRole="candidate">
-                            <CandidateDashboard />
-                        </ProtectedRoute>
-                    } />
-                    <Route path="/company-dashboard" element={
-                        <ProtectedRoute allowedRole="company">
-                            <CompanyDashboard />
-                        </ProtectedRoute>
-                    } />
+
+                    {/* CANDIDATE */}
+                    <Route
+                        path="/candidate-dashboard"
+                        element={
+                            <ProtectedRoute allowedRole="candidate">
+                                <CandidateDashboard />
+                            </ProtectedRoute>
+                        }
+                    />
+
+                    {/* RECRUITER (company-dashboard) */}
+                    <Route
+                        path="/company-dashboard"
+                        element={
+                            <ProtectedRoute allowedRole="recruiter">
+                                <CompanyDashboard />
+                            </ProtectedRoute>
+                        }
+                    />
                 </Routes>
             </div>
         </div>

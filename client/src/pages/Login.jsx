@@ -12,11 +12,19 @@ const Login = () => {
         e.preventDefault();
         setIsLoading(true);
         setError('');
+
         try {
-            const res = await axios.post(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/auth/login`, formData);
+            const res = await axios.post(
+                `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/auth/login`,
+                formData
+            );
+
+            // Store token + user
             localStorage.setItem('token', res.data.token);
             localStorage.setItem('user', JSON.stringify(res.data.user));
-            if (res.data.user.role === 'company') {
+
+            // Correct role checking
+            if (res.data.user.role === 'recruiter') {
                 navigate('/company-dashboard');
             } else {
                 navigate('/candidate-dashboard');
@@ -71,6 +79,7 @@ const Login = () => {
                                 required
                             />
                         </div>
+
                         <button
                             type="submit"
                             disabled={isLoading}
