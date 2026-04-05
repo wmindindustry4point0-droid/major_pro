@@ -1,5 +1,3 @@
-// server/routes/candidateRoutes.js
-
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -8,10 +6,8 @@ const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const axios = require('axios');
 const path = require('path');
-
 const CandidateProfile = require('../models/CandidateProfile');
-const Job = require('../models/Job');
-const Application = require('../models/Application');
+const { requireAuth, requireRole } = require('../middleware/auth');
 
 const AI_SERVICE = process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001';
 
@@ -42,27 +38,26 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-// Generate a short-lived signed URL so AI service can download the PDF directly
-async function getS3SignedUrl(s3Key) {
+async function getS3SignedUrl(s3Key, expiresIn = 300) {
     const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key });
-    return await getSignedUrl(s3, command, { expiresIn: 300 });
+    return await getSignedUrl(s3, command, { expiresIn });
 }
 
-// POST: /api/candidate/profile
-router.post('/profile', upload.single('resume'), async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// Upload/update candidate resume profile (candidate only)
+// POST /api/candidate/profile
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/profile', requireAuth, requireRole('candidate'), upload.single('resume'), async (req, res) => {
     try {
-        const userId = req.body.userId;
-        if (!userId) return res.status(400).json({ message: 'User ID is required' });
+        const userId = req.user._id; // from JWT — never trust body for identity
         if (!req.file) return res.status(400).json({ message: 'Please upload a resume (PDF)' });
 
         const s3Key = req.file.key;
         const resumeUrl = req.file.location;
 
-        // Pass signed URL directly to AI — no temp download needed
+        // Pass signed URL to AI — no temp download needed
         const signedUrl = await getS3SignedUrl(s3Key);
-        const aiResponse = await axios.post(`${AI_SERVICE}/extract_resume`, {
-            resume_path: signedUrl
-        });
+        const aiResponse = await axios.post(`${AI_SERVICE}/extract_resume`, { resume_path: signedUrl });
         const aiData = aiResponse.data;
         if (aiData.error) return res.status(500).json({ message: 'AI Extraction failed', error: aiData.error });
 
@@ -91,16 +86,23 @@ router.post('/profile', upload.single('resume'), async (req, res) => {
     }
 });
 
-// GET: /api/candidate/profile/:userId
-router.get('/profile/:userId', async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// Get candidate profile (candidate — own profile only)
+// GET /api/candidate/profile/:userId
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/profile/:userId', requireAuth, requireRole('candidate'), async (req, res) => {
+    // Enforce ownership
+    if (req.user._id.toString() !== req.params.userId) {
+        return res.status(403).json({ message: 'Access denied.' });
+    }
     try {
         const profile = await CandidateProfile.findOne({ userId: req.params.userId });
         if (!profile) return res.status(404).json({ message: 'Profile not found' });
 
+        // Generate fresh signed URL for resume access
         let signedResumeUrl = profile.resumeUrl;
         if (profile.resumeS3Key) {
-            const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: profile.resumeS3Key });
-            signedResumeUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+            signedResumeUrl = await getS3SignedUrl(profile.resumeS3Key, 3600);
         }
 
         res.status(200).json({ ...profile.toObject(), resumeUrl: signedResumeUrl });
@@ -110,8 +112,14 @@ router.get('/profile/:userId', async (req, res) => {
     }
 });
 
-// PUT: /api/candidate/profile/:userId
-router.put('/profile/:userId', async (req, res) => {
+// ─────────────────────────────────────────────────────────────────────────────
+// Update candidate profile fields (candidate — own profile only)
+// PUT /api/candidate/profile/:userId
+// ─────────────────────────────────────────────────────────────────────────────
+router.put('/profile/:userId', requireAuth, requireRole('candidate'), async (req, res) => {
+    if (req.user._id.toString() !== req.params.userId) {
+        return res.status(403).json({ message: 'Access denied.' });
+    }
     try {
         const { experience, education, location, extractedSkills } = req.body;
         const updateFields = {};
@@ -133,56 +141,8 @@ router.put('/profile/:userId', async (req, res) => {
     }
 });
 
-// POST: /api/candidate/apply
-router.post('/apply', async (req, res) => {
-    try {
-        const { candidateId, jobId, resumePath } = req.body;
-        if (!candidateId || !jobId || !resumePath) {
-            return res.status(400).json({ message: 'Missing required application fields' });
-        }
-
-        const existingApp = await Application.findOne({ candidateId, jobId });
-        if (existingApp) return res.status(400).json({ message: 'You have already applied to this job' });
-
-        const job = await Job.findById(jobId);
-        if (!job) return res.status(404).json({ message: 'Job not found' });
-
-        const s3Key = resumePath.includes('amazonaws.com')
-            ? new URL(resumePath.split('?')[0]).pathname.slice(1)
-            : resumePath;
-
-        const signedUrl = await getS3SignedUrl(s3Key);
-
-        let matchScore = 0;
-        let aiFeedback = '';
-        try {
-            const aiResponse = await axios.post(`${AI_SERVICE}/analyze`, {
-                resume_path: signedUrl,
-                job_description: job.description,
-                required_skills: job.requiredSkills
-            });
-            matchScore = aiResponse.data.match_percentage ?? 0;
-            aiFeedback = aiResponse.data.feedback || '';
-        } catch (err) {
-            console.error('AI Match Score Error:', err.response?.data || err.message);
-        }
-
-        const application = new Application({
-            candidateId,
-            jobId,
-            resumePath: s3Key,
-            status: 'applied',
-            matchScore,
-            aiFeedback,
-            appliedAt: new Date()
-        });
-
-        await application.save();
-        res.status(201).json({ message: 'Applied successfully!', application });
-    } catch (error) {
-        console.error('Apply Error:', error);
-        res.status(500).json({ message: 'Server error during job application' });
-    }
-});
+// NOTE: The /apply endpoint has been removed from candidateRoutes.
+// All job applications go through POST /api/applications/apply (appRoutes.js).
+// This avoids the duplicate apply flow that existed previously.
 
 module.exports = router;

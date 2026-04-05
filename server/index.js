@@ -9,7 +9,6 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Allow all Vercel preview URLs + production URL
 const allowedOrigins = [
     'http://localhost:5173',
     'https://major-pro-omega.vercel.app',
@@ -18,9 +17,7 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (mobile apps, curl, etc.)
         if (!origin) return callback(null, true);
-        // Allow any vercel.app subdomain
         if (origin.endsWith('.vercel.app') || allowedOrigins.includes(origin)) {
             return callback(null, true);
         }
@@ -32,12 +29,16 @@ app.use(cors({
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
-// Session middleware
+// Session middleware — secure flag must be false in development (HTTP)
 app.use(session({
     secret: process.env.SESSION_SECRET || 'hiremind_secret_key',
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: true } // true since we're on HTTPS in production
+    cookie: {
+        secure: process.env.NODE_ENV === 'production', // fixed: was always true, broke localhost
+        httpOnly: true,
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+    }
 }));
 
 // Passport (Google OAuth)
