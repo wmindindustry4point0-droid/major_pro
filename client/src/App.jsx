@@ -6,20 +6,18 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import CandidateDashboard from './pages/CandidateDashboard';
 import CompanyDashboard from './pages/CompanyDashboard';
-import OAuthCallback from './pages/OAuthCallback'; // ← ADDED
+import OAuthCallback from './pages/OAuthCallback';
 
-// Protected Route Component
 const ProtectedRoute = ({ children, allowedRole }) => {
     const user = JSON.parse(localStorage.getItem('user'));
-    if (!user) return <Navigate to="/login" />;
+    const token = localStorage.getItem('token');
+    if (!user || !token) return <Navigate to="/" />;
     if (allowedRole && user.role !== allowedRole) return <Navigate to="/" />;
     return children;
 };
 
 const AppContent = () => {
     const location = useLocation();
-
-    // Hide the default Navbar on landing page and custom layout dashboards
     const hideNavbarRoutes = ['/', '/company-dashboard', '/candidate-dashboard', '/oauth-callback'];
     const showDefaultNavbar = !hideNavbarRoutes.includes(location.pathname);
 
@@ -31,14 +29,12 @@ const AppContent = () => {
                     <Route path="/" element={<Home />} />
                     <Route path="/login" element={<Login />} />
                     <Route path="/register" element={<Register />} />
-                    <Route path="/oauth-callback" element={<OAuthCallback />} /> {/* ← ADDED */}
-
+                    <Route path="/oauth-callback" element={<OAuthCallback />} />
                     <Route path="/candidate-dashboard" element={
                         <ProtectedRoute allowedRole="candidate">
                             <CandidateDashboard />
                         </ProtectedRoute>
                     } />
-
                     <Route path="/company-dashboard" element={
                         <ProtectedRoute allowedRole="company">
                             <CompanyDashboard />
