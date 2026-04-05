@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Briefcase, User, ArrowRight, Loader2, Mail, ShieldCheck } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -21,6 +20,10 @@ const slideVariants = {
     exit: { opacity: 0, x: -20, transition: { duration: 0.2 } }
 };
 
+const redirectToDashboard = (role) => {
+    window.location.href = role === 'company' ? '/company-dashboard' : '/candidate-dashboard';
+};
+
 const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
     const [view, setView] = useState(initialView);
     const [selectedRole, setSelectedRole] = useState(null);
@@ -30,8 +33,6 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
     const [success, setSuccess] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [loginMode, setLoginMode] = useState('password');
-
-    const navigate = useNavigate();
 
     React.useEffect(() => {
         if (isOpen) {
@@ -66,7 +67,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
             localStorage.setItem('token', res.data.token);
             localStorage.setItem('user', JSON.stringify(res.data.user));
             onClose();
-            navigate(res.data.user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard');
+            redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
             setIsLoading(false);
@@ -99,7 +100,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
             localStorage.setItem('token', res.data.token);
             localStorage.setItem('user', JSON.stringify(res.data.user));
             onClose();
-            navigate(res.data.user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard');
+            redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Invalid or expired OTP.');
             setIsLoading(false);
@@ -150,7 +151,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
             localStorage.setItem('token', loginRes.data.token);
             localStorage.setItem('user', JSON.stringify(loginRes.data.user));
             onClose();
-            navigate(loginRes.data.user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard');
+            redirectToDashboard(loginRes.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Invalid or expired OTP.');
             setIsLoading(false);
