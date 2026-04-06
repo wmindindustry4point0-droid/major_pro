@@ -1,8 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const OAuthCallback = () => {
-    const navigate = useNavigate();
     const didRun = useRef(false);
 
     useEffect(() => {
@@ -15,7 +13,7 @@ const OAuthCallback = () => {
 
             if (!data) {
                 console.error('OAuthCallback: no data param found');
-                navigate('/', { replace: true });
+                window.location.href = '/';
                 return;
             }
 
@@ -25,18 +23,17 @@ const OAuthCallback = () => {
             localStorage.setItem('token', parsed.token);
             localStorage.setItem('user', JSON.stringify(parsed.user));
 
-            setTimeout(() => {
-                navigate(
-                    parsed.user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard',
-                    { replace: true }
-                );
-            }, 100);
+            // FIX: use window.location.href instead of navigate()
+            // navigate() was being intercepted by Vercel's rewrite rules
+            window.location.href = parsed.user.role === 'company'
+                ? '/company-dashboard'
+                : '/candidate-dashboard';
 
         } catch (err) {
             console.error('OAuthCallback: failed to parse data', err);
-            navigate('/', { replace: true });
+            window.location.href = '/';
         }
-    }, [navigate]);
+    }, []);
 
     return (
         <div className="min-h-screen bg-slate-950 flex items-center justify-center">
