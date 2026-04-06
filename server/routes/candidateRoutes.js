@@ -54,18 +54,21 @@ async function getS3SignedUrl(s3Key, expiresIn = 300) {
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/resume-proxy/:userId', async (req, res) => {
     try {
-        // Support token from Authorization header OR ?token= query param
-        // (needed for browser navigation via <a> or window.open)
+        // Extract token from Authorization header or ?token=
         let token = null;
         const authHeader = req.headers.authorization;
+
         if (authHeader && authHeader.startsWith('Bearer ')) {
             token = authHeader.split(' ')[1];
         } else if (req.query.token) {
             token = req.query.token;
         }
 
-        if (!token) return res.status(401).json({ message: 'Authentication required.' });
+        if (!token) {
+            return res.status(401).json({ message: 'Authentication required.' });
+        }
 
+        // Verify JWT
         let decoded;
         try {
             decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -73,6 +76,7 @@ router.get('/resume-proxy/:userId', async (req, res) => {
             return res.status(401).json({ message: 'Invalid or expired token.' });
         }
 
+        // Role + Ownership validation
         if (decoded.role !== 'candidate') {
             return res.status(403).json({ message: 'Access denied.' });
         }
@@ -80,20 +84,29 @@ router.get('/resume-proxy/:userId', async (req, res) => {
         if (decoded._id.toString() !== req.params.userId) {
             return res.status(403).json({ message: 'Access denied.' });
         }
-    try {
+
+        // Fetch Profile
         const profile = await CandidateProfile.findOne({ userId: req.params.userId });
         if (!profile || !profile.resumeS3Key) {
             return res.status(404).json({ message: 'No resume found. Please upload your resume first.' });
         }
 
-        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: profile.resumeS3Key });
+        // Fetch from S3
+        const command = new GetObjectCommand({
+            Bucket: BUCKET_NAME,
+            Key: profile.resumeS3Key
+        });
+
         const s3Response = await s3.send(command);
 
+        // Stream PDF
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'inline; filename="resume.pdf"');
+
         s3Response.Body.pipe(res);
+
     } catch (error) {
-        console.error('Resume proxy error:', error.message);
+        console.error("Resume proxy error:", error.message);
         res.status(500).json({ message: 'Failed to fetch resume.' });
     }
 });
