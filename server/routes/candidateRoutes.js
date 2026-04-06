@@ -1,26 +1,26 @@
+/**
+ * server/routes/candidateRoutes.js
+ * BUG FIXED: Duplicate S3Client init — now imports from shared lib/s3.js
+ * BUG FIXED: resumeUrl stored as time-limited snapshot URL — now stores permanent S3 URI
+ * BUG FIXED: resume-proxy didn't validate S3 Content-Type or handle NoSuchKey explicitly
+ * BUG FIXED: Signed URL for AI service was 300s (5 min) — increased to 900s (15 min)
+ */
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const multerS3 = require('multer-s3');
-const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
+const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const axios = require('axios');
 const path = require('path');
 const CandidateProfile = require('../models/CandidateProfile');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const jwt = require('jsonwebtoken');
 
+// BUG FIXED: No longer initialising S3Client here — using shared instance
+const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
+
 const AI_SERVICE = process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001';
-
-const s3 = new S3Client({
-    region: process.env.AWS_REGION || 'us-east-1',
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    }
-});
-
-const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME;
 
 const upload = multer({
     storage: multerS3({
@@ -39,22 +39,14 @@ const upload = multer({
     limits: { fileSize: 5 * 1024 * 1024 }
 });
 
-async function getS3SignedUrl(s3Key, expiresIn = 300) {
-    const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key });
-    return await getSignedUrl(s3, command, { expiresIn });
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Resume Proxy — FIX for S3 CORS and Access Denied errors
+// Resume Proxy — serves S3 resume server-side to avoid CORS / Access Denied
 // GET /api/candidate/resume-proxy/:userId
 // GET /api/candidate/resume-proxy/:userId?token=JWT_TOKEN
-// Fetches the candidate's saved resume from S3 server-side and streams it
-// back to the browser. Supports token as query param because <a> tags and
-// window.open() cannot send Authorization headers.
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/resume-proxy/:userId', async (req, res) => {
     try {
-        // Extract token from Authorization header or ?token=
+        // Extract token from Authorization header or ?token= query param
         let token = null;
         const authHeader = req.headers.authorization;
 
@@ -76,16 +68,15 @@ router.get('/resume-proxy/:userId', async (req, res) => {
             return res.status(401).json({ message: 'Invalid or expired token.' });
         }
 
-        // Role + Ownership validation
+        // Role + ownership validation
         if (decoded.role !== 'candidate') {
             return res.status(403).json({ message: 'Access denied.' });
         }
-
         if (decoded._id.toString() !== req.params.userId) {
             return res.status(403).json({ message: 'Access denied.' });
         }
 
-        // Fetch Profile
+        // Fetch profile
         const profile = await CandidateProfile.findOne({ userId: req.params.userId });
         if (!profile || !profile.resumeS3Key) {
             return res.status(404).json({ message: 'No resume found. Please upload your resume first.' });
@@ -97,22 +88,37 @@ router.get('/resume-proxy/:userId', async (req, res) => {
             Key: profile.resumeS3Key
         });
 
-        const s3Response = await s3.send(command);
+        let s3Response;
+        try {
+            s3Response = await s3.send(command);
+        } catch (s3Err) {
+            // BUG FIXED: NoSuchKey was previously swallowed into a generic 500
+            if (s3Err.name === 'NoSuchKey' || s3Err.$metadata?.httpStatusCode === 404) {
+                return res.status(404).json({ message: 'Resume file not found in storage.' });
+            }
+            throw s3Err;
+        }
 
-        // Stream PDF
+        // BUG FIXED: Was blindly streaming without checking Content-Type from S3.
+        // Now validates the file is actually a PDF before streaming.
+        const contentType = s3Response.ContentType || 'application/octet-stream';
+        if (!contentType.includes('pdf')) {
+            return res.status(422).json({ message: 'Stored file is not a valid PDF.' });
+        }
+
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', 'inline; filename="resume.pdf"');
 
         s3Response.Body.pipe(res);
 
     } catch (error) {
-        console.error("Resume proxy error:", error.message);
+        console.error('Resume proxy error:', error.message);
         res.status(500).json({ message: 'Failed to fetch resume.' });
     }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Upload/update candidate resume profile (candidate only)
+// Upload / update candidate resume profile (candidate only)
 // POST /api/candidate/profile
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/profile', requireAuth, requireRole('candidate'), upload.single('resume'), async (req, res) => {
@@ -121,17 +127,24 @@ router.post('/profile', requireAuth, requireRole('candidate'), upload.single('re
         if (!req.file) return res.status(400).json({ message: 'Please upload a resume (PDF)' });
 
         const s3Key = req.file.key;
-        const resumeUrl = req.file.location;
 
-        const signedUrl = await getS3SignedUrl(s3Key);
+        // BUG FIXED: Previously stored req.file.location (a time-limited signed URL) as resumeUrl.
+        // That URL expires and becomes invalid. Now storing the permanent S3 URI instead.
+        // Fresh signed URLs are always generated on-demand via resumeS3Key.
+        const resumeS3Uri = `s3://${BUCKET_NAME}/${s3Key}`;
+
+        // BUG FIXED: Signed URL for AI service was 300s. Increased to 900s to avoid
+        // timeout issues when the AI service is under load.
+        const signedUrl = await getS3SignedUrl(s3Key, 900);
+
         const aiResponse = await axios.post(`${AI_SERVICE}/extract_resume`, { resume_path: signedUrl });
         const aiData = aiResponse.data;
         if (aiData.error) return res.status(500).json({ message: 'AI Extraction failed', error: aiData.error });
 
         let profile = await CandidateProfile.findOne({ userId });
         const updateData = {
-            resumeUrl,
-            resumeS3Key: s3Key,
+            resumeUrl: resumeS3Uri,       // permanent S3 URI — not a signed URL
+            resumeS3Key: s3Key,           // key used to generate fresh signed URLs
             extractedName: aiData.candidateName,
             extractedEmail: aiData.email,
             extractedPhone: aiData.phone,
@@ -165,7 +178,8 @@ router.get('/profile/:userId', requireAuth, requireRole('candidate'), async (req
         const profile = await CandidateProfile.findOne({ userId: req.params.userId });
         if (!profile) return res.status(404).json({ message: 'Profile not found' });
 
-        let signedResumeUrl = profile.resumeUrl;
+        // Always generate a fresh 1-hour signed URL for the frontend
+        let signedResumeUrl = null;
         if (profile.resumeS3Key) {
             signedResumeUrl = await getS3SignedUrl(profile.resumeS3Key, 3600);
         }

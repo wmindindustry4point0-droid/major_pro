@@ -1,26 +1,20 @@
+/**
+ * server/routes/jobRoutes.js
+ * BUG FIXED: Duplicate S3Client init — now imports from shared lib/s3.js
+ */
+
 const express = require('express');
 const router = express.Router();
 const Job = require('../models/Job');
 const AIWorkspace = require('../models/AIWorkspace');
 const multer = require('multer');
 const multerS3 = require('multer-s3');
-const { S3Client } = require('@aws-sdk/client-s3');
 const path = require('path');
 const axios = require('axios');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-const { GetObjectCommand } = require('@aws-sdk/client-s3');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
-// ── S3 setup ─────────────────────────────────────────────────────────────────
-const s3 = new S3Client({
-    region: process.env.AWS_REGION || 'us-east-1',
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    }
-});
-
-const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME;
+// BUG FIXED: No longer initialising S3Client here — using shared instance
+const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 
 const upload = multer({
     storage: multerS3({
@@ -38,11 +32,6 @@ const upload = multer({
     },
     limits: { fileSize: 10 * 1024 * 1024 }
 });
-
-async function getS3SignedUrl(s3Key, expiresIn = 300) {
-    const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key });
-    return await getSignedUrl(s3, command, { expiresIn });
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Create Job (company only)
@@ -77,7 +66,6 @@ router.get('/', async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/analyze-fit', requireAuth, requireRole('candidate'), upload.single('resume'), async (req, res) => {
     try {
-        // FIX: guard against missing file before accessing req.file.key
         if (!req.file) return res.status(400).json({ error: 'Resume file is required.' });
 
         const { jobDescription, requiredSkills } = req.body;
@@ -175,7 +163,6 @@ router.get('/workspaces/:companyId', requireAuth, requireRole('company'), async 
     }
 });
 
-// FIX: added ownership check — any company could previously overwrite another company's workspace
 router.put('/workspaces/:id', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const workspace = await AIWorkspace.findById(req.params.id);

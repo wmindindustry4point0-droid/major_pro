@@ -1,30 +1,25 @@
+/**
+ * server/routes/appRoutes.js
+ * BUG FIXED: Duplicate S3Client init — now imports from shared lib/s3.js
+ * BUG FIXED: tmpPath declared but never assigned — finally block was dead code.
+ *            The downloadS3ToTemp helper existed but was never called. Removed the dead
+ *            variable and finally block. If a fallback download is ever needed, wire it up properly.
+ * BUG FIXED: Signed URL for AI service was 300s — increased to 900s via shared getS3SignedUrl default.
+ */
+
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const multerS3 = require('multer-s3');
-const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const path = require('path');
-const fs = require('fs');
-const os = require('os');
 const axios = require('axios');
 const Application = require('../models/Application');
 const Job = require('../models/Job');
 const { sendStatusEmail } = require('../mailer');
 const { requireAuth, requireRole } = require('../middleware/auth');
 
-// ===============================
-// AWS S3 CONFIG
-// ===============================
-const s3 = new S3Client({
-    region: process.env.AWS_REGION || 'us-east-1',
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    }
-});
-
-const BUCKET_NAME = process.env.AWS_S3_BUCKET_NAME;
+// BUG FIXED: No longer initialising S3Client here — using shared instance
+const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 
 const upload = multer({
     storage: multerS3({
@@ -42,26 +37,6 @@ const upload = multer({
     },
     limits: { fileSize: 5 * 1024 * 1024 }
 });
-
-// Helper: generate a short-lived signed URL for AI service
-async function getS3SignedUrl(s3Key, expiresIn = 300) {
-    const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key });
-    return await getSignedUrl(s3, command, { expiresIn });
-}
-
-// Helper: download from S3 to /tmp for AI service (fallback if AI can't fetch URLs)
-async function downloadS3ToTemp(s3Key) {
-    const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: s3Key });
-    const response = await s3.send(command);
-    const tmpPath = path.join(os.tmpdir(), path.basename(s3Key));
-    const fileStream = fs.createWriteStream(tmpPath);
-    await new Promise((resolve, reject) => {
-        response.Body.pipe(fileStream);
-        response.Body.on('error', reject);
-        fileStream.on('finish', resolve);
-    });
-    return tmpPath;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Apply for a Job (candidate only)
@@ -87,6 +62,7 @@ router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resu
         let matchScore = 0;
         let aiFeedback = '';
         try {
+            // BUG FIXED: getS3SignedUrl now defaults to 900s instead of 300s
             const signedUrl = await getS3SignedUrl(s3Key);
             const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze`, {
                 resume_path: signedUrl,
@@ -97,6 +73,7 @@ router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resu
             aiFeedback = aiResponse.data.feedback || '';
         } catch (err) {
             console.error('AI Match Score Error:', err.response?.data || err.message);
+            // Non-fatal — application is still saved, score defaults to 0
         }
 
         const application = new Application({
@@ -175,14 +152,14 @@ router.get('/candidate/:candidateId', requireAuth, requireRole('candidate'), asy
 // ─────────────────────────────────────────────────────────────────────────────
 // Analyze Resume (company triggers AI on a specific application)
 // POST /api/applications/analyze/:applicationId
+// BUG FIXED: Removed dead tmpPath variable and dead finally block.
+//            downloadS3ToTemp was defined but never called — the route uses signed URLs.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/analyze/:applicationId', requireAuth, requireRole('company'), async (req, res) => {
-    let tmpPath = null;
     try {
         const application = await Application.findById(req.params.applicationId).populate('jobId');
         if (!application) return res.status(404).json({ error: 'Application not found' });
 
-        // Pass signed URL directly to AI (no temp download needed if AI can fetch URLs)
         const signedUrl = await getS3SignedUrl(application.resumePath);
 
         try {
@@ -203,8 +180,6 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
         }
     } catch (err) {
         res.status(500).json({ error: err.message });
-    } finally {
-        if (tmpPath && fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
     }
 });
 
