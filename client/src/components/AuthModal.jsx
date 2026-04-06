@@ -187,7 +187,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                         <X className="w-5 h-5" />
                     </button>
 
-                    <div className="p-8">
+                    <div className="p-5 sm:p-8">
                         <AnimatePresence mode="wait">
 
                             {/* ── ROLE SELECT ─────────────────────────────────── */}

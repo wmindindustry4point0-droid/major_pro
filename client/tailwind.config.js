@@ -4,6 +4,7 @@ export default {
         "./index.html",
         "./src/**/*.{js,ts,jsx,tsx}",
     ],
+    darkMode: 'class',
     theme: {
         extend: {
             keyframes: {
@@ -14,7 +15,10 @@ export default {
             },
             animation: {
                 'fade-in': 'fade-in 0.3s ease-out forwards',
-            }
+            },
+            screens: {
+                'xs': '480px',
+            },
         },
     },
     plugins: [],
