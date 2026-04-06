@@ -8,6 +8,7 @@ const axios = require('axios');
 const path = require('path');
 const CandidateProfile = require('../models/CandidateProfile');
 const { requireAuth, requireRole } = require('../middleware/auth');
+const jwt = require('jsonwebtoken');
 
 const AI_SERVICE = process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001';
 
@@ -44,16 +45,41 @@ async function getS3SignedUrl(s3Key, expiresIn = 300) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Resume Proxy — FIX for S3 CORS error on apply
+// Resume Proxy — FIX for S3 CORS and Access Denied errors
 // GET /api/candidate/resume-proxy/:userId
+// GET /api/candidate/resume-proxy/:userId?token=JWT_TOKEN
 // Fetches the candidate's saved resume from S3 server-side and streams it
-// back to the browser. This avoids the browser hitting S3 directly, which
-// is blocked by S3's CORS policy.
+// back to the browser. Supports token as query param because <a> tags and
+// window.open() cannot send Authorization headers.
 // ─────────────────────────────────────────────────────────────────────────────
-router.get('/resume-proxy/:userId', requireAuth, requireRole('candidate'), async (req, res) => {
-    if (req.user._id.toString() !== req.params.userId) {
-        return res.status(403).json({ message: 'Access denied.' });
-    }
+router.get('/resume-proxy/:userId', async (req, res) => {
+    try {
+        // Support token from Authorization header OR ?token= query param
+        // (needed for browser navigation via <a> or window.open)
+        let token = null;
+        const authHeader = req.headers.authorization;
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.split(' ')[1];
+        } else if (req.query.token) {
+            token = req.query.token;
+        }
+
+        if (!token) return res.status(401).json({ message: 'Authentication required.' });
+
+        let decoded;
+        try {
+            decoded = jwt.verify(token, process.env.JWT_SECRET);
+        } catch {
+            return res.status(401).json({ message: 'Invalid or expired token.' });
+        }
+
+        if (decoded.role !== 'candidate') {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
+
+        if (decoded._id.toString() !== req.params.userId) {
+            return res.status(403).json({ message: 'Access denied.' });
+        }
     try {
         const profile = await CandidateProfile.findOne({ userId: req.params.userId });
         if (!profile || !profile.resumeS3Key) {
