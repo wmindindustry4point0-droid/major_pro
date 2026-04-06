@@ -3,11 +3,13 @@ import axios from 'axios';
 import { Search, MapPin, Briefcase, Clock, Send, CheckCircle2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 const BrowseJobs = () => {
     const [jobs, setJobs] = useState([]);
     const [applications, setApplications] = useState([]);
     const [profile, setProfile] = useState(null);
-    const [searchTerm, setSearchTerm] = useState("");
+    const [searchTerm, setSearchTerm] = useState('');
     const [applyingTo, setApplyingTo] = useState(null);
 
     const user = JSON.parse(localStorage.getItem('user'));
@@ -20,11 +22,11 @@ const BrowseJobs = () => {
     const fetchData = async () => {
         try {
             const [jobsRes, appsRes, profileRes] = await Promise.all([
-                axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs`),
-                axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/applications/candidate/${user._id}`, {
+                axios.get(`${API}/api/jobs`),
+                axios.get(`${API}/api/applications/candidate/${user._id}`, {
                     headers: { Authorization: `Bearer ${token}` }
                 }),
-                axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`, {
+                axios.get(`${API}/api/candidate/profile/${user._id}`, {
                     headers: { Authorization: `Bearer ${token}` }
                 }).catch(() => ({ data: null }))
             ]);
@@ -33,7 +35,7 @@ const BrowseJobs = () => {
             setApplications(appsRes.data);
             setProfile(profileRes.data);
         } catch (error) {
-            console.error("Error fetching jobs:", error);
+            console.error('Error fetching jobs:', error);
         }
     };
 
@@ -56,35 +58,39 @@ const BrowseJobs = () => {
         setApplyingTo(jobId);
 
         try {
-            // FIX: was calling deleted endpoint /api/candidate/apply with plain JSON.
-            // Correct endpoint is /api/applications/apply which requires multipart/form-data.
-            // We fetch the candidate's saved resume as a Blob and send it with the request.
-            const resumeBlob = await fetch(profile.resumeUrl).then(r => r.blob());
+            // FIX: Instead of fetching the resume directly from S3 (which causes a CORS error
+            // because S3 blocks browser requests from vercel.app), we fetch it through our own
+            // backend proxy endpoint which downloads from S3 server-side and streams it back.
+            const proxyResponse = await fetch(`${API}/api/candidate/resume-proxy/${user._id}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (!proxyResponse.ok) {
+                throw new Error('Failed to fetch resume from server. Please try again.');
+            }
+
+            const resumeBlob = await proxyResponse.blob();
 
             const formData = new FormData();
             formData.append('jobId', jobId);
             formData.append('resume', resumeBlob, 'resume.pdf');
 
-            await axios.post(
-                `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/applications/apply`,
-                formData,
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                        'Content-Type': 'multipart/form-data'
-                    }
+            await axios.post(`${API}/api/applications/apply`, formData, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'multipart/form-data'
                 }
-            );
+            });
 
-            const appsRes = await axios.get(
-                `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/applications/candidate/${user._id}`,
-                { headers: { Authorization: `Bearer ${token}` } }
-            );
+            // Refresh applications list to show Applied badge
+            const appsRes = await axios.get(`${API}/api/applications/candidate/${user._id}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
             setApplications(appsRes.data);
 
         } catch (error) {
-            console.error("Application failed", error);
-            alert(error.response?.data?.error || "Application failed. Please try again.");
+            console.error('Application failed', error);
+            alert(error.response?.data?.error || error.message || 'Application failed. Please try again.');
         } finally {
             setApplyingTo(null);
         }
@@ -171,7 +177,6 @@ const BrowseJobs = () => {
                                             <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 px-6 py-3 rounded-xl border border-emerald-500/20 font-bold">
                                                 <CheckCircle2 className="w-5 h-5" /> Applied
                                             </div>
-                                            {/* FIX: was app.aiScore — correct field name from DB is matchScore */}
                                             {app?.matchScore != null && (
                                                 <span className="text-xs font-bold px-2 py-1 bg-indigo-700 text-white rounded-md">
                                                     AI Match: {app.matchScore}%

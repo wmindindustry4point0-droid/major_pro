@@ -44,18 +44,46 @@ async function getS3SignedUrl(s3Key, expiresIn = 300) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Resume Proxy — FIX for S3 CORS error on apply
+// GET /api/candidate/resume-proxy/:userId
+// Fetches the candidate's saved resume from S3 server-side and streams it
+// back to the browser. This avoids the browser hitting S3 directly, which
+// is blocked by S3's CORS policy.
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/resume-proxy/:userId', requireAuth, requireRole('candidate'), async (req, res) => {
+    if (req.user._id.toString() !== req.params.userId) {
+        return res.status(403).json({ message: 'Access denied.' });
+    }
+    try {
+        const profile = await CandidateProfile.findOne({ userId: req.params.userId });
+        if (!profile || !profile.resumeS3Key) {
+            return res.status(404).json({ message: 'No resume found. Please upload your resume first.' });
+        }
+
+        const command = new GetObjectCommand({ Bucket: BUCKET_NAME, Key: profile.resumeS3Key });
+        const s3Response = await s3.send(command);
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'inline; filename="resume.pdf"');
+        s3Response.Body.pipe(res);
+    } catch (error) {
+        console.error('Resume proxy error:', error.message);
+        res.status(500).json({ message: 'Failed to fetch resume.' });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Upload/update candidate resume profile (candidate only)
 // POST /api/candidate/profile
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/profile', requireAuth, requireRole('candidate'), upload.single('resume'), async (req, res) => {
     try {
-        const userId = req.user._id; // from JWT — never trust body for identity
+        const userId = req.user._id;
         if (!req.file) return res.status(400).json({ message: 'Please upload a resume (PDF)' });
 
         const s3Key = req.file.key;
         const resumeUrl = req.file.location;
 
-        // Pass signed URL to AI — no temp download needed
         const signedUrl = await getS3SignedUrl(s3Key);
         const aiResponse = await axios.post(`${AI_SERVICE}/extract_resume`, { resume_path: signedUrl });
         const aiData = aiResponse.data;
@@ -91,7 +119,6 @@ router.post('/profile', requireAuth, requireRole('candidate'), upload.single('re
 // GET /api/candidate/profile/:userId
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/profile/:userId', requireAuth, requireRole('candidate'), async (req, res) => {
-    // Enforce ownership
     if (req.user._id.toString() !== req.params.userId) {
         return res.status(403).json({ message: 'Access denied.' });
     }
@@ -99,7 +126,6 @@ router.get('/profile/:userId', requireAuth, requireRole('candidate'), async (req
         const profile = await CandidateProfile.findOne({ userId: req.params.userId });
         if (!profile) return res.status(404).json({ message: 'Profile not found' });
 
-        // Generate fresh signed URL for resume access
         let signedResumeUrl = profile.resumeUrl;
         if (profile.resumeS3Key) {
             signedResumeUrl = await getS3SignedUrl(profile.resumeS3Key, 3600);
@@ -140,9 +166,5 @@ router.put('/profile/:userId', requireAuth, requireRole('candidate'), async (req
         res.status(500).json({ message: 'Server error updating profile' });
     }
 });
-
-// NOTE: The /apply endpoint has been removed from candidateRoutes.
-// All job applications go through POST /api/applications/apply (appRoutes.js).
-// This avoids the duplicate apply flow that existed previously.
 
 module.exports = router;
