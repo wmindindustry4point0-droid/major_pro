@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
 
 const Login = () => {
     const [formData, setFormData] = useState({ email: '', password: '' });
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const navigate = useNavigate();
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -22,12 +21,7 @@ const Login = () => {
             localStorage.setItem('token', res.data.token);
             localStorage.setItem('user', JSON.stringify(res.data.user));
 
-            // FIX: was checking 'recruiter' which never exists — correct role is 'company'
-            if (res.data.user.role === 'company') {
-                navigate('/company-dashboard');
-            } else {
-                navigate('/candidate-dashboard');
-            }
+            window.location.href = res.data.user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard';
         } catch (err) {
             setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
         } finally {
