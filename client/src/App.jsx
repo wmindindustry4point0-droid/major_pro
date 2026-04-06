@@ -9,12 +9,19 @@ import CompanyDashboard from './pages/CompanyDashboard';
 import OAuthCallback from './pages/OAuthCallback';
 
 const ProtectedRoute = ({ children, allowedRole }) => {
-    const user = JSON.parse(localStorage.getItem('user'));
+    const user = (() => {
+        try {
+            return JSON.parse(localStorage.getItem('user'));
+        } catch {
+            return null;
+        }
+    })();
     const token = localStorage.getItem('token');
 
+    // FIX: if token or user is missing, go home
     if (!user || !token) return <Navigate to="/" />;
 
-    // FIXED: backend sends "recruiter" not "company"
+    // FIX: role check uses the schema values: 'candidate' and 'company'
     if (allowedRole && user.role !== allowedRole) return <Navigate to="/" />;
 
     return children;
@@ -36,7 +43,7 @@ const AppContent = () => {
                     <Route path="/register" element={<Register />} />
                     <Route path="/oauth-callback" element={<OAuthCallback />} />
 
-                    {/* CANDIDATE */}
+                    {/* CANDIDATE — role stored as 'candidate' in DB */}
                     <Route
                         path="/candidate-dashboard"
                         element={
@@ -46,7 +53,7 @@ const AppContent = () => {
                         }
                     />
 
-                    {/* RECRUITER (company-dashboard) */}
+                    {/* COMPANY/RECRUITER — role stored as 'company' in DB */}
                     <Route
                         path="/company-dashboard"
                         element={

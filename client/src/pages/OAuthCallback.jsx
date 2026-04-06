@@ -18,13 +18,21 @@ const OAuthCallback = () => {
             }
 
             const parsed = JSON.parse(atob(data));
-            console.log('OAuthCallback: decoded successfully', parsed);
+
+            // FIX: guard against malformed payload — if token or user is missing,
+            // don't silently store undefined values which break ProtectedRoute
+            if (!parsed.token || !parsed.user) {
+                console.error('OAuthCallback: missing token or user in decoded payload', parsed);
+                window.location.href = '/';
+                return;
+            }
 
             localStorage.setItem('token', parsed.token);
             localStorage.setItem('user', JSON.stringify(parsed.user));
 
-            // FIX: use window.location.href instead of navigate()
-            // navigate() was being intercepted by Vercel's rewrite rules
+            // FIX: redirect immediately after storing — do not call any React state
+            // setters after this point, as a re-render could fire ProtectedRoute
+            // before the href navigation completes
             window.location.href = parsed.user.role === 'company'
                 ? '/company-dashboard'
                 : '/candidate-dashboard';

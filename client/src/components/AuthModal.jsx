@@ -20,6 +20,7 @@ const slideVariants = {
     exit: { opacity: 0, x: -20, transition: { duration: 0.2 } }
 };
 
+// FIX: redirect first, then close — prevents ProtectedRoute from firing before localStorage is set
 const redirectToDashboard = (role) => {
     window.location.href = role === 'company' ? '/company-dashboard' : '/candidate-dashboard';
 };
@@ -66,7 +67,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
             });
             localStorage.setItem('token', res.data.token);
             localStorage.setItem('user', JSON.stringify(res.data.user));
-            onClose();
+            // FIX: redirect before onClose to ensure localStorage is read by ProtectedRoute
             redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
@@ -99,7 +100,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
             const res = await axios.post(`${API}/api/auth/verify-login-otp`, { email: formData.email, otp });
             localStorage.setItem('token', res.data.token);
             localStorage.setItem('user', JSON.stringify(res.data.user));
-            onClose();
+            // FIX: redirect before onClose — this was the main bug causing the loop back to home
             redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Invalid or expired OTP.');
@@ -135,7 +136,10 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
         setIsLoading(true);
         setError('');
         try {
-            await axios.post(`${API}/api/auth/verify-register`, {
+            // FIX: use the response from verify-register directly — it already returns { token, user }
+            // The old code was making a second /api/auth/login call which fails for Google OAuth users
+            // (they have no password), causing a silent failure and empty localStorage
+            const res = await axios.post(`${API}/api/auth/verify-register`, {
                 email: formData.email,
                 otp,
                 name: formData.name,
@@ -143,15 +147,10 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                 role: selectedRole,
                 companyName: formData.companyName
             });
-            // Auto-login after successful registration
-            const loginRes = await axios.post(`${API}/api/auth/login`, {
-                email: formData.email,
-                password: formData.password
-            });
-            localStorage.setItem('token', loginRes.data.token);
-            localStorage.setItem('user', JSON.stringify(loginRes.data.user));
-            onClose();
-            redirectToDashboard(loginRes.data.user.role);
+            localStorage.setItem('token', res.data.token);
+            localStorage.setItem('user', JSON.stringify(res.data.user));
+            // FIX: redirect before onClose
+            redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Invalid or expired OTP.');
             setIsLoading(false);
