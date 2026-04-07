@@ -1,24 +1,19 @@
 /**
  * server/routes/appRoutes.js
- * BUG FIXED: Duplicate S3Client init — now imports from shared lib/s3.js
- * BUG FIXED: tmpPath declared but never assigned — finally block was dead code.
- *            The downloadS3ToTemp helper existed but was never called. Removed the dead
- *            variable and finally block. If a fallback download is ever needed, wire it up properly.
- * BUG FIXED: Signed URL for AI service was 300s — increased to 900s via shared getS3SignedUrl default.
+ * ADDED: Notification creation on apply, analyze, and status change events.
  */
 
 const express = require('express');
-const router = express.Router();
-const multer = require('multer');
+const router  = express.Router();
+const multer  = require('multer');
 const multerS3 = require('multer-s3');
-const path = require('path');
-const axios = require('axios');
-const Application = require('../models/Application');
-const Job = require('../models/Job');
+const path    = require('path');
+const axios   = require('axios');
+const Application  = require('../models/Application');
+const Job          = require('../models/Job');
+const Notification = require('../models/Notification');
 const { sendStatusEmail } = require('../mailer');
 const { requireAuth, requireRole } = require('../middleware/auth');
-
-// BUG FIXED: No longer initialising S3Client here — using shared instance
 const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 
 const upload = multer({
@@ -44,28 +39,26 @@ const upload = multer({
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resume'), async (req, res) => {
     try {
-        const candidateId = req.user._id; // always from JWT, never from body
+        const candidateId = req.user._id;
         const { jobId, coverLetter } = req.body;
 
         if (!req.file) return res.status(400).json({ error: 'Resume file is required' });
-        if (!jobId) return res.status(400).json({ error: 'Job ID is required' });
+        if (!jobId)    return res.status(400).json({ error: 'Job ID is required' });
 
         const existingApp = await Application.findOne({ candidateId, jobId });
         if (existingApp) return res.status(400).json({ error: 'You have already applied to this job' });
 
-        const job = await Job.findById(jobId);
+        const job = await Job.findById(jobId).populate('companyId', 'name companyName');
         if (!job) return res.status(404).json({ error: 'Job not found' });
 
         const s3Key = req.file.key;
 
-        // Run AI match score immediately on apply
         let matchScore = 0;
         let aiFeedback = '';
         try {
-            // BUG FIXED: getS3SignedUrl now defaults to 900s instead of 300s
             const signedUrl = await getS3SignedUrl(s3Key);
             const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze`, {
-                resume_path: signedUrl,
+                resume_path:    signedUrl,
                 job_description: job.description,
                 required_skills: job.requiredSkills
             });
@@ -73,20 +66,28 @@ router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resu
             aiFeedback = aiResponse.data.feedback || '';
         } catch (err) {
             console.error('AI Match Score Error:', err.response?.data || err.message);
-            // Non-fatal — application is still saved, score defaults to 0
         }
 
         const application = new Application({
-            candidateId,
-            jobId,
+            candidateId, jobId,
             resumePath: s3Key,
             coverLetter,
             status: 'applied',
-            matchScore,
-            aiFeedback,
+            matchScore, aiFeedback,
             appliedAt: new Date()
         });
         await application.save();
+
+        // ── Notify the company that a new application was received ──
+        try {
+            await Notification.create({
+                userId:  job.companyId._id,
+                type:    'application_received',
+                title:   'New Application Received',
+                message: `${req.user.name} applied for "${job.title}".`
+            });
+        } catch (e) { console.error('Notification error:', e.message); }
+
         res.status(201).json({ message: 'Applied successfully!', application });
     } catch (err) {
         res.status(400).json({ error: err.message });
@@ -105,9 +106,7 @@ router.get('/job/:jobId', requireAuth, requireRole('company'), async (req, res) 
 
         const appsWithUrls = await Promise.all(applications.map(async (app) => {
             const obj = app.toObject();
-            if (app.resumePath) {
-                obj.resumeSignedUrl = await getS3SignedUrl(app.resumePath, 3600);
-            }
+            if (app.resumePath) obj.resumeSignedUrl = await getS3SignedUrl(app.resumePath, 3600);
             return obj;
         }));
 
@@ -118,14 +117,12 @@ router.get('/job/:jobId', requireAuth, requireRole('company'), async (req, res) 
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Get Applications for a Candidate (candidate only — own applications)
+// Get Applications for a Candidate (candidate only)
 // GET /api/applications/candidate/:candidateId
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/candidate/:candidateId', requireAuth, requireRole('candidate'), async (req, res) => {
-    // Enforce ownership — a candidate can only see their own applications
-    if (req.user._id.toString() !== req.params.candidateId) {
+    if (req.user._id.toString() !== req.params.candidateId)
         return res.status(403).json({ error: 'Access denied.' });
-    }
     try {
         const applications = await Application.find({ candidateId: req.params.candidateId })
             .populate({
@@ -137,9 +134,7 @@ router.get('/candidate/:candidateId', requireAuth, requireRole('candidate'), asy
 
         const appsWithUrls = await Promise.all(applications.map(async (app) => {
             const obj = app.toObject();
-            if (app.resumePath) {
-                obj.resumeSignedUrl = await getS3SignedUrl(app.resumePath, 3600);
-            }
+            if (app.resumePath) obj.resumeSignedUrl = await getS3SignedUrl(app.resumePath, 3600);
             return obj;
         }));
 
@@ -150,10 +145,8 @@ router.get('/candidate/:candidateId', requireAuth, requireRole('candidate'), asy
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Analyze Resume (company triggers AI on a specific application)
+// Analyze Resume (company triggers AI)
 // POST /api/applications/analyze/:applicationId
-// BUG FIXED: Removed dead tmpPath variable and dead finally block.
-//            downloadS3ToTemp was defined but never called — the route uses signed URLs.
 // ─────────────────────────────────────────────────────────────────────────────
 router.post('/analyze/:applicationId', requireAuth, requireRole('company'), async (req, res) => {
     try {
@@ -164,15 +157,26 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
 
         try {
             const response = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze`, {
-                resume_path: signedUrl,
+                resume_path:     signedUrl,
                 job_description: application.jobId.description,
                 required_skills: application.jobId.requiredSkills
             });
 
             application.matchScore = response.data.match_percentage;
             application.aiFeedback = response.data.feedback;
-            application.status = 'analyzed';
+            application.status     = 'analyzed';
             await application.save();
+
+            // ── Notify candidate their resume was analyzed ──
+            try {
+                await Notification.create({
+                    userId:  application.candidateId,
+                    type:    'status_analyzed',
+                    title:   'Resume Analyzed',
+                    message: `Your resume for "${application.jobId.title}" has been analyzed by the recruiter.`
+                });
+            } catch (e) { console.error('Notification error:', e.message); }
+
             res.json(application);
         } catch (aiError) {
             console.error('AI Service Error:', aiError.message);
@@ -184,20 +188,17 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Update Application Status (company only — shortlist/reject)
+// Update Application Status (company only)
 // PATCH /api/applications/:id/status
 // ─────────────────────────────────────────────────────────────────────────────
 router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const { status } = req.body;
-        if (!['shortlisted', 'rejected', 'applied', 'analyzed'].includes(status)) {
+        if (!['shortlisted', 'rejected', 'applied', 'analyzed'].includes(status))
             return res.status(400).json({ error: 'Invalid status value.' });
-        }
 
         const application = await Application.findByIdAndUpdate(
-            req.params.id,
-            { status },
-            { new: true }
+            req.params.id, { status }, { new: true }
         )
         .populate('candidateId', 'name email')
         .populate({
@@ -208,13 +209,29 @@ router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res
 
         if (!application) return res.status(404).json({ error: 'Application not found.' });
 
+        // ── Notify candidate of shortlist / rejection ──
         if (status === 'shortlisted' || status === 'rejected') {
+            const companyName = application.jobId.companyId?.companyName
+                || application.jobId.companyId?.name || 'the company';
+
+            try {
+                await Notification.create({
+                    userId:  application.candidateId._id,
+                    type:    status === 'shortlisted' ? 'status_shortlisted' : 'status_rejected',
+                    title:   status === 'shortlisted' ? '🎉 You were shortlisted!' : 'Application Update',
+                    message: status === 'shortlisted'
+                        ? `Congratulations! ${companyName} shortlisted you for "${application.jobId.title}".`
+                        : `${companyName} has reviewed your application for "${application.jobId.title}" and moved forward with other candidates.`
+                });
+            } catch (e) { console.error('Notification error:', e.message); }
+
+            // Send email too
             try {
                 await sendStatusEmail({
-                    toEmail: application.candidateId.email,
+                    toEmail:      application.candidateId.email,
                     candidateName: application.candidateId.name,
-                    jobTitle: application.jobId.title,
-                    companyName: application.jobId.companyId?.companyName || application.jobId.companyId?.name || 'the company',
+                    jobTitle:     application.jobId.title,
+                    companyName,
                     status
                 });
             } catch (emailErr) {

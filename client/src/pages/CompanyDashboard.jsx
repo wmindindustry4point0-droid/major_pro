@@ -10,6 +10,7 @@ import Overview from '../components/dashboard/Overview';
 import JobManagement from '../components/dashboard/JobManagement';
 import ResumeAnalyzer from '../components/dashboard/ResumeAnalyzer';
 import ThemeToggle from '../components/ThemeToggle';
+import NotificationBell from '../components/NotificationBell';
 import { useTheme } from '../context/ThemeContext';
 
 const CompanyDashboard = () => {
@@ -193,6 +194,9 @@ const CompanyDashboard = () => {
                         >
                             <LogOut className="w-4 h-4" />
                         </button>
+
+                        {/* Notifications */}
+                        <NotificationBell />
 
                         {/* System online badge — hidden on small screens */}
                         <div className="hidden sm:flex px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold items-center gap-2">

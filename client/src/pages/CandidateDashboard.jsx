@@ -4,7 +4,7 @@ import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import {
     LayoutDashboard, FileText, Search, Briefcase, Target,
-    Settings, LogOut, Bell, UserCircle, TrendingUp, Clock,
+    Settings, LogOut, UserCircle, TrendingUp, Clock,
     Activity, ChevronRight, RefreshCw, Menu, X, BrainCircuit,
 } from "lucide-react";
 
@@ -14,6 +14,7 @@ import MyApplications from "../components/dashboard/candidate/MyApplications";
 import MatchScore from "../components/dashboard/candidate/MatchScore";
 import CandidateSettings from "../components/dashboard/candidate/Settings";
 import ThemeToggle from "../components/ThemeToggle";
+import NotificationBell from "../components/NotificationBell";
 import { useTheme } from "../context/ThemeContext";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -394,11 +395,8 @@ const CandidateDashboard = () => {
                             <LogOut className="w-4 h-4" />
                         </button>
 
-                        {/* Bell */}
-                        <button className={`relative p-2 transition-colors ${isDark ? "text-slate-400 hover:text-white" : "text-slate-400 hover:text-slate-700"}`}>
-                            <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
-                            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full border border-slate-900" />
-                        </button>
+                        {/* Notifications */}
+                        <NotificationBell />
 
                         {/* User pill */}
                         <div className={`flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l ${dividerCol}`}>
