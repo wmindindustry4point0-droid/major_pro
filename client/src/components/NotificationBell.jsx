@@ -8,10 +8,10 @@ const POLL_INTERVAL = 30_000;
 
 const typeConfig = {
     application_received: { icon: Briefcase, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
-    status_shortlisted:   { icon: Star, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-    status_rejected:      { icon: XCircle, color: 'text-rose-400', bg: 'bg-rose-500/10' },
-    status_analyzed:      { icon: BrainCircuit, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-    job_posted:           { icon: Megaphone, color: 'text-amber-400', bg: 'bg-amber-500/10' }
+    status_shortlisted: { icon: Star, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    status_rejected: { icon: XCircle, color: 'text-rose-400', bg: 'bg-rose-500/10' },
+    status_analyzed: { icon: BrainCircuit, color: 'text-purple-400', bg: 'bg-purple-500/10' },
+    job_posted: { icon: Megaphone, color: 'text-amber-400', bg: 'bg-amber-500/10' }
 };
 
 const timeAgo = (dateStr) => {
@@ -94,7 +94,7 @@ const NotificationBell = () => {
         <div className="relative" ref={dropdownRef}>
             {/* Bell button */}
             <button
-                onClick={() => setOpen(prev => !prev)}
+                onClick={() => setOpen(prev => !(prev))}
                 className={`relative p-2 rounded-lg transition-colors ${
                     isDark
                         ? 'text-slate-400 hover:text-white hover:bg-slate-800'
@@ -115,9 +115,15 @@ const NotificationBell = () => {
                 <div
                     className={`
                         absolute top-full mt-2
-                        right-0 sm:right-0
-                        w-[90vw] sm:w-80 md:w-96
-                        max-w-[90vw]
+                        
+                        /* MOBILE - center dropdown */
+                        left-1/2 -translate-x-1/2  
+                        
+                        /* DESKTOP - right align */
+                        sm:left-auto sm:right-0 sm:translate-x-0 
+                        
+                        w-[92vw] sm:w-80 md:w-96
+                        max-w-[92vw]
                         border rounded-2xl overflow-hidden z-50
                         ${dropBg}
                     `}
@@ -148,7 +154,7 @@ const NotificationBell = () => {
                         )}
                     </div>
 
-                    {/* List */}
+                    {/* Notifications List */}
                     <div className="max-h-[420px] overflow-y-auto custom-scrollbar">
                         {notifications.length === 0 ? (
                             <div className={`text-center py-12 text-sm ${emptyCol}`}>
