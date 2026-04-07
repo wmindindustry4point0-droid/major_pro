@@ -1,6 +1,9 @@
 /**
  * server/routes/appRoutes.js
- * ADDED: Notification creation on apply, analyze, and status change events.
+ * FIX: matchScore saved as null (not 0) when AI is unavailable so the UI can
+ *      show "AI unavailable" instead of a misleading 0% match score.
+ * FIX: Duplicate-application error now returns 409 to let the frontend
+ *      distinguish it from other 400 errors.
  */
 
 const express = require('express');
@@ -46,26 +49,29 @@ router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resu
         if (!jobId)    return res.status(400).json({ error: 'Job ID is required' });
 
         const existingApp = await Application.findOne({ candidateId, jobId });
-        if (existingApp) return res.status(400).json({ error: 'You have already applied to this job' });
+        // FIX: Return 409 Conflict so frontend can give a specific message
+        if (existingApp) return res.status(409).json({ error: 'You have already applied to this job' });
 
         const job = await Job.findById(jobId).populate('companyId', 'name companyName');
         if (!job) return res.status(404).json({ error: 'Job not found' });
 
         const s3Key = req.file.key;
 
-        let matchScore = 0;
+        // FIX: matchScore starts as null — only set if AI responds successfully.
+        // A null score is shown as "Pending" in the UI rather than 0%.
+        let matchScore = null;
         let aiFeedback = '';
         try {
             const signedUrl = await getS3SignedUrl(s3Key);
             const aiResponse = await axios.post(`${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze`, {
-                resume_path:    signedUrl,
+                resume_path:     signedUrl,
                 job_description: job.description,
                 required_skills: job.requiredSkills
-            });
-            matchScore = aiResponse.data.match_percentage ?? 0;
+            }, { timeout: 60000 }); // 60s timeout for cold-start HF spaces
+            matchScore = aiResponse.data.match_percentage ?? null;
             aiFeedback = aiResponse.data.feedback || '';
         } catch (err) {
-            console.error('AI Match Score Error:', err.response?.data || err.message);
+            console.error('AI Match Score Error (non-fatal):', err.response?.data || err.message);
         }
 
         const application = new Application({
@@ -73,12 +79,13 @@ router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resu
             resumePath: s3Key,
             coverLetter,
             status: 'applied',
-            matchScore, aiFeedback,
+            matchScore,
+            aiFeedback,
             appliedAt: new Date()
         });
         await application.save();
 
-        // ── Notify the company that a new application was received ──
+        // Notify the company that a new application was received
         try {
             await Notification.create({
                 userId:  job.companyId._id,
@@ -90,6 +97,10 @@ router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resu
 
         res.status(201).json({ message: 'Applied successfully!', application });
     } catch (err) {
+        // FIX: Catch the unique index violation from MongoDB (race condition)
+        if (err.code === 11000) {
+            return res.status(409).json({ error: 'You have already applied to this job' });
+        }
         res.status(400).json({ error: err.message });
     }
 });
@@ -160,14 +171,14 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
                 resume_path:     signedUrl,
                 job_description: application.jobId.description,
                 required_skills: application.jobId.requiredSkills
-            });
+            }, { timeout: 60000 });
 
             application.matchScore = response.data.match_percentage;
             application.aiFeedback = response.data.feedback;
             application.status     = 'analyzed';
             await application.save();
 
-            // ── Notify candidate their resume was analyzed ──
+            // Notify candidate their resume was analyzed
             try {
                 await Notification.create({
                     userId:  application.candidateId,
@@ -180,7 +191,7 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
             res.json(application);
         } catch (aiError) {
             console.error('AI Service Error:', aiError.message);
-            res.status(500).json({ error: 'AI Analysis failed' });
+            res.status(500).json({ error: 'AI Analysis failed. Please ensure the AI service is running.' });
         }
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -209,7 +220,7 @@ router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res
 
         if (!application) return res.status(404).json({ error: 'Application not found.' });
 
-        // ── Notify candidate of shortlist / rejection ──
+        // Notify candidate of shortlist / rejection
         if (status === 'shortlisted' || status === 'rejected') {
             const companyName = application.jobId.companyId?.companyName
                 || application.jobId.companyId?.name || 'the company';
@@ -225,12 +236,11 @@ router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res
                 });
             } catch (e) { console.error('Notification error:', e.message); }
 
-            // Send email too
             try {
                 await sendStatusEmail({
-                    toEmail:      application.candidateId.email,
+                    toEmail:       application.candidateId.email,
                     candidateName: application.candidateId.name,
-                    jobTitle:     application.jobId.title,
+                    jobTitle:      application.jobId.title,
                     companyName,
                     status
                 });

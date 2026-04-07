@@ -1,28 +1,54 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import axios from 'axios';
-import { BrainCircuit } from 'lucide-react';
+import { BrainCircuit, Loader2, ShieldCheck } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
 import { useTheme } from '../context/ThemeContext';
 
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
 const Register = () => {
+    const [step, setStep] = useState('form'); // 'form' | 'otp'
     const [formData, setFormData] = useState({ name: '', email: '', password: '', role: 'candidate', companyName: '' });
+    const [otp, setOtp] = useState('');
     const [error, setError] = useState('');
+    const [success, setSuccess] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const navigate = useNavigate();
     const { theme } = useTheme();
     const isDark = theme === 'dark';
 
-    const handleSubmit = async (e) => {
+    // Step 1: send OTP
+    const handleSendOtp = async (e) => {
+        e.preventDefault();
+        if (formData.password.length < 6) {
+            setError('Password must be at least 6 characters.');
+            return;
+        }
+        setIsLoading(true);
+        setError('');
+        try {
+            await axios.post(`${API}/api/auth/send-otp`, formData);
+            setSuccess('OTP sent to your email. Valid for 10 minutes.');
+            setStep('otp');
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to send OTP. Please try again.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // Step 2: verify OTP and complete registration
+    const handleVerifyOtp = async (e) => {
         e.preventDefault();
         setIsLoading(true);
         setError('');
         try {
-            await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/auth/register`, formData);
-            navigate('/login');
+            const res = await axios.post(`${API}/api/auth/verify-register`, { ...formData, otp });
+            localStorage.setItem('token', res.data.token);
+            localStorage.setItem('user', JSON.stringify(res.data.user));
+            window.location.href = res.data.user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard';
         } catch (err) {
-            setError(err.response?.data?.error || 'Registration failed. Please try again.');
-        } finally {
+            setError(err.response?.data?.error || 'Invalid or expired OTP. Please try again.');
             setIsLoading(false);
         }
     };
@@ -48,49 +74,86 @@ const Register = () => {
                 <div className={`backdrop-blur-xl p-6 sm:p-8 rounded-3xl shadow-2xl border ${isDark ? 'bg-white/10 border-white/20' : 'bg-white/80 border-slate-200'}`}>
                     <div className="text-center mb-6">
                         <h2 className={`text-3xl sm:text-4xl font-extrabold tracking-tight ${isDark ? 'text-transparent bg-clip-text bg-gradient-to-r from-indigo-200 to-purple-200' : 'text-slate-800'}`}>
-                            Create Account
+                            {step === 'form' ? 'Create Account' : 'Verify Email'}
                         </h2>
-                        <p className={`mt-2 text-sm ${isDark ? 'text-gray-300' : 'text-slate-500'}`}>Join us to streamline your hiring process</p>
+                        <p className={`mt-2 text-sm ${isDark ? 'text-gray-300' : 'text-slate-500'}`}>
+                            {step === 'form' ? 'Join HireMind AI today' : `Enter the OTP sent to ${formData.email}`}
+                        </p>
                     </div>
 
                     {error && (
-                        <div className="mb-5 bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-xl text-sm text-center animate-fade-in">{error}</div>
+                        <div className="mb-5 bg-red-500/10 border border-red-500/50 text-red-400 px-4 py-3 rounded-xl text-sm text-center">{error}</div>
+                    )}
+                    {success && (
+                        <div className="mb-5 bg-emerald-500/10 border border-emerald-500/50 text-emerald-400 px-4 py-3 rounded-xl text-sm text-center">{success}</div>
                     )}
 
-                    <form onSubmit={handleSubmit} className="space-y-4">
-                        <div><label className={labelCls}>Full Name</label><input type="text" className={inputCls} placeholder="John Doe" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required /></div>
-                        <div><label className={labelCls}>Email Address</label><input type="email" className={inputCls} placeholder="name@example.com" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} required /></div>
-                        <div><label className={labelCls}>Password</label><input type="password" className={inputCls} placeholder="••••••••" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} required /></div>
+                    {step === 'form' ? (
+                        <form onSubmit={handleSendOtp} className="space-y-4">
+                            <div><label className={labelCls}>Full Name</label><input type="text" className={inputCls} placeholder="John Doe" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} required /></div>
+                            <div><label className={labelCls}>Email Address</label><input type="email" className={inputCls} placeholder="name@example.com" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} required /></div>
+                            <div><label className={labelCls}>Password</label><input type="password" className={inputCls} placeholder="Min. 6 characters" value={formData.password} onChange={(e) => setFormData({ ...formData, password: e.target.value })} required /></div>
 
-                        <div>
-                            <label className={labelCls}>Account Type</label>
-                            <div className="relative">
-                                <select className={`${inputCls} appearance-none cursor-pointer ${isDark ? '[&>option]:bg-slate-800 [&>option]:text-white' : '[&>option]:bg-white [&>option]:text-slate-900'}`}
-                                    value={formData.role}
-                                    onChange={(e) => setFormData({ ...formData, role: e.target.value, companyName: e.target.value === 'candidate' ? '' : formData.companyName })}>
-                                    <option value="candidate">Candidate</option>
-                                    <option value="company">Company / Recruiter</option>
-                                </select>
-                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
-                                    <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" /></svg>
+                            <div>
+                                <label className={labelCls}>Account Type</label>
+                                <div className="relative">
+                                    <select className={`${inputCls} appearance-none cursor-pointer`}
+                                        value={formData.role}
+                                        onChange={(e) => setFormData({ ...formData, role: e.target.value, companyName: e.target.value === 'candidate' ? '' : formData.companyName })}>
+                                        <option value="candidate">Candidate</option>
+                                        <option value="company">Company / Recruiter</option>
+                                    </select>
+                                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-gray-400">
+                                        <svg className="fill-current h-4 w-4" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" /></svg>
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        {formData.role === 'company' && (
-                            <div className="animate-fade-in">
-                                <label className={labelCls}>Company Name</label>
-                                <input type="text" className={inputCls} placeholder="Acme Corp" value={formData.companyName} onChange={(e) => setFormData({ ...formData, companyName: e.target.value })} required />
+                            {formData.role === 'company' && (
+                                <div>
+                                    <label className={labelCls}>Company Name</label>
+                                    <input type="text" className={inputCls} placeholder="Acme Corp" value={formData.companyName} onChange={(e) => setFormData({ ...formData, companyName: e.target.value })} required />
+                                </div>
+                            )}
+
+                            <div className="pt-1">
+                                <button type="submit" disabled={isLoading}
+                                    className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 sm:py-3.5 px-4 rounded-xl hover:from-indigo-500 hover:to-purple-500 transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-70 text-sm sm:text-base flex items-center justify-center gap-2">
+                                    {isLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Sending OTP...</> : 'Continue with Email'}
+                                </button>
                             </div>
-                        )}
-
-                        <div className="pt-1">
-                            <button type="submit" disabled={isLoading}
-                                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 sm:py-3.5 px-4 rounded-xl hover:from-indigo-500 hover:to-purple-500 transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-70 text-sm sm:text-base">
-                                {isLoading ? 'Creating Account...' : 'Sign Up'}
+                        </form>
+                    ) : (
+                        <form onSubmit={handleVerifyOtp} className="space-y-5">
+                            <div className="text-center">
+                                <ShieldCheck className="w-12 h-12 text-indigo-400 mx-auto mb-3" />
+                                <p className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                                    Check your inbox and enter the 6-digit code below.
+                                </p>
+                            </div>
+                            <div>
+                                <label className={labelCls}>One-Time Password</label>
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    maxLength={6}
+                                    className={`${inputCls} text-center text-2xl tracking-[0.5em] font-mono`}
+                                    placeholder="000000"
+                                    value={otp}
+                                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                                    required
+                                />
+                            </div>
+                            <button type="submit" disabled={isLoading || otp.length < 6}
+                                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 sm:py-3.5 px-4 rounded-xl hover:from-indigo-500 hover:to-purple-500 transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-70 text-sm sm:text-base flex items-center justify-center gap-2">
+                                {isLoading ? <><Loader2 className="w-4 h-4 animate-spin" /> Verifying...</> : 'Create Account'}
                             </button>
-                        </div>
-                    </form>
+                            <button type="button" onClick={() => { setStep('form'); setOtp(''); setError(''); setSuccess(''); }}
+                                className={`w-full text-sm font-medium transition-colors ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-800'}`}>
+                                ← Back to edit details
+                            </button>
+                        </form>
+                    )}
 
                     <p className={`mt-6 text-center text-sm ${isDark ? 'text-gray-400' : 'text-slate-500'}`}>
                         Already have an account?{' '}

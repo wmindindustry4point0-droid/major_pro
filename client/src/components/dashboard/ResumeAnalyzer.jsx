@@ -9,6 +9,10 @@ const ResumeAnalyzer = ({ user }) => {
     const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(true);
     const [activeTab, setActiveTab] = useState('description');
 
+    // FIX: JWT auth header required by all workspace API routes (requireRole('company'))
+    const token = localStorage.getItem('token');
+    const authHeader = { Authorization: `Bearer ${token}` };
+
     useEffect(() => {
         if (user && user._id) {
             fetchWorkspaces();
@@ -17,7 +21,7 @@ const ResumeAnalyzer = ({ user }) => {
 
     const fetchWorkspaces = async () => {
         try {
-            const res = await axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs/workspaces/${user._id}`);
+            const res = await axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs/workspaces/${user._id}`, { headers: authHeader });
             setSavedWorkspaces(res.data);
         } catch (err) {
             console.error("Error fetching workspaces", err);
@@ -65,7 +69,7 @@ const ResumeAnalyzer = ({ user }) => {
                 requiredSkills: ['Python', 'Machine Learning', 'TensorFlow'],
                 status: 'Draft'
             };
-            const res = await axios.post(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs/workspaces`, newWorkspace);
+            const res = await axios.post(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs/workspaces`, newWorkspace, { headers: authHeader });
             setSavedWorkspaces([res.data, ...savedWorkspaces]);
             loadWorkspace(res.data);
         } catch (err) {
@@ -87,7 +91,7 @@ const ResumeAnalyzer = ({ user }) => {
     const saveWorkspaceState = async (updates) => {
         if (!workspace || !workspace._id) return;
         try {
-            const res = await axios.put(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs/workspaces/${workspace._id}`, updates);
+            const res = await axios.put(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs/workspaces/${workspace._id}`, updates, { headers: authHeader });
             setWorkspace(res.data);
             setSavedWorkspaces(prev => prev.map(w => w._id === res.data._id ? res.data : w));
         } catch (err) {
@@ -139,7 +143,7 @@ const ResumeAnalyzer = ({ user }) => {
 
         try {
             const response = await axios.post(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/jobs/analyze-workspace`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
+                headers: { 'Content-Type': 'multipart/form-data', Authorization: `Bearer ${token}` }
             });
 
             if (response.data && response.data.analyzed_candidates) {

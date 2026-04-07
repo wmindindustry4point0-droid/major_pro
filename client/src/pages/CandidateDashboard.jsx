@@ -105,10 +105,10 @@ const Overview = ({ user, profile, applications, isLoading, isRefreshing, lastRe
     return (
         <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-10">
-                <OverviewCard title="Jobs Applied"       value={applications.length} icon={Briefcase} colorClass="indigo"  trend="+2 this week" isDark={isDark} />
+                <OverviewCard title="Jobs Applied"       value={applications.length} icon={Briefcase} colorClass="indigo"  isDark={isDark} />
                 <OverviewCard title="Profile Completion" value={profileCompletion}   icon={FileText}  colorClass="purple"                       isDark={isDark} />
                 <OverviewCard title="Avg. Match Score"   value={avgMatch}            icon={Target}    colorClass="emerald"                      isDark={isDark} />
-                <OverviewCard title="Profile Views"      value="4"                   icon={Activity}  colorClass="blue"   trend="+1"            isDark={isDark} />
+                <OverviewCard title="Shortlisted"        value={applications.filter(a => a.status === 'shortlisted').length} icon={Activity}  colorClass="blue"   isDark={isDark} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 sm:gap-8">
@@ -217,9 +217,11 @@ const CandidateDashboard = () => {
         if (!silent) setIsLoading(true);
         else setIsRefreshing(true);
         try {
+            const token = localStorage.getItem('token');
+            const authHeader = { Authorization: `Bearer ${token}` };
             const [profileRes, appRes] = await Promise.all([
-                axios.get(`${API}/api/candidate/profile/${user._id}`).catch(() => ({ data: null })),
-                axios.get(`${API}/api/applications/candidate/${user._id}`),
+                axios.get(`${API}/api/candidate/profile/${user._id}`, { headers: authHeader }).catch(() => ({ data: null })),
+                axios.get(`${API}/api/applications/candidate/${user._id}`, { headers: authHeader }),
             ]);
             setProfile(profileRes.data);
             const sorted = [...appRes.data].sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt));
