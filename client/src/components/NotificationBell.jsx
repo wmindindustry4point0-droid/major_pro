@@ -112,22 +112,20 @@ const NotificationBell = () => {
 
             {/* Dropdown */}
             {open && (
-                <div
-                    className={`
-                        absolute top-full mt-2
-                        
-                        /* MOBILE - center dropdown */
-                        left-1/2 -translate-x-1/2  
-                        
-                        /* DESKTOP - right align */
-                        sm:left-auto sm:right-0 sm:translate-x-0 
-                        
-                        w-[92vw] sm:w-80 md:w-96
-                        max-w-[92vw]
-                        border rounded-2xl overflow-hidden z-50
-                        ${dropBg}
-                    `}
-                >
+    <div
+        className={`
+            fixed sm:absolute 
+            top-16 sm:top-full 
+            left-1/2 sm:left-auto
+            -translate-x-1/2 sm:translate-x-0
+            sm:right-0
+            w-[92vw] sm:w-80 md:w-96
+            max-h-[450px]
+            border rounded-2xl overflow-hidden
+            z-[9999]
+            ${dropBg}
+        `}
+    >
                     {/* Header */}
                     <div className={`flex items-center justify-between px-4 py-3 border-b ${headerBg}`}>
                         <div className="flex items-center gap-2">
