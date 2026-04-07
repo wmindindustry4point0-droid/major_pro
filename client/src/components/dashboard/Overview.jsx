@@ -1,142 +1,149 @@
-import React from 'react';
-import { motion } from 'framer-motion';
-import { Briefcase, Users, FileText, Target, TrendingUp, TrendingDown, BrainCircuit } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+import { Briefcase, Target, FileText, TrendingUp, ChevronRight, Activity } from 'lucide-react';
 
-const Overview = () => {
-    // Mock Data for demonstration
-    const stats = [
-        { label: "Total Jobs Posted", value: "12", change: "+2", trend: "up", icon: Briefcase, color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
-        { label: "Total Applicants", value: "842", change: "+14%", trend: "up", icon: Users, color: "text-indigo-400", bg: "bg-indigo-500/10", border: "border-indigo-500/20" },
-        { label: "Resumes Analyzed", value: "790", change: "+22%", trend: "up", icon: FileText, color: "text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/20" },
-        { label: "Shortlisted Candidates", value: "48", change: "-5%", trend: "down", icon: Target, color: "text-pink-400", bg: "bg-pink-500/10", border: "border-pink-500/20" },
-    ];
+const OverviewCard = ({ title, value, icon: Icon, trend, colorClass }) => (
+    <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl relative overflow-hidden group hover:border-slate-700 transition-all">
+        <div className={`absolute top-0 right-0 w-32 h-32 bg-${colorClass}-500/10 rounded-bl-[100px] -mr-8 -mt-8 transition-transform group-hover:scale-110`}></div>
+        <div className="flex justify-between items-start relative z-10 mb-4">
+            <div className={`p-3 rounded-xl bg-${colorClass}-500/20 text-${colorClass}-400`}>
+                <Icon className="w-6 h-6" />
+            </div>
+            {trend && (
+                <span className="flex items-center gap-1 text-xs font-bold text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg">
+                    <TrendingUp className="w-3 h-3" /> {trend}
+                </span>
+            )}
+        </div>
+        <h3 className="text-slate-400 text-sm font-semibold relative z-10">{title}</h3>
+        <p className="text-3xl font-bold text-white mt-1 relative z-10">{value}</p>
+    </div>
+);
 
-    const distributionData = [
-        { range: "90-100%", count: 15, height: "h-12", color: "bg-indigo-400" },
-        { range: "80-89%", count: 45, height: "h-32", color: "bg-indigo-500" },
-        { range: "70-79%", count: 120, height: "h-48", color: "bg-purple-500" },
-        { range: "60-69%", count: 210, height: "h-64", color: "bg-purple-600" },
-        { range: "50-59%", count: 180, height: "h-56", color: "bg-pink-600" },
-        { range: "<50%", count: 220, height: "h-72", color: "bg-slate-700" },
-    ];
+const CandidateOverview = () => {
+    const [profile, setProfile] = useState(null);
+    const [applications, setApplications] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const user = JSON.parse(localStorage.getItem('user'));
 
-    const topSkills = [
-        { skill: "React.js", percentage: 85, color: "from-blue-500 to-indigo-500" },
-        { skill: "Python", percentage: 72, color: "from-indigo-500 to-purple-500" },
-        { skill: "Machine Learning", percentage: 64, color: "from-purple-500 to-pink-500" },
-        { skill: "Node.js", percentage: 58, color: "from-pink-500 to-rose-500" },
-        { skill: "TensorFlow", percentage: 41, color: "from-slate-400 to-slate-600" },
-    ];
+    useEffect(() => {
+        const fetchDashboardData = async () => {
+            try {
+                const token = localStorage.getItem('token');
+            const authHeader = { Authorization: `Bearer ${token}` };
+            const [profileRes, appRes] = await Promise.all([
+                    axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`, { headers: authHeader }).catch(() => ({ data: null })),
+                    axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/applications/candidate/${user._id}`, { headers: authHeader })
+                ]);
+                
+                setProfile(profileRes.data);
+                setApplications(appRes.data);
+            } catch (error) {
+                console.error("Error fetching overview data:", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchDashboardData();
+    }, [user._id]);
 
-    const containerVariants = {
-        hidden: { opacity: 0 },
-        visible: { opacity: 1, transition: { staggerChildren: 0.1 } }
-    };
+    const profileCompletion = profile ? (profile.extractedSkills?.length > 0 ? '100%' : '60%') : '0%';
+    const appsWithScore = applications.filter(a => a.matchScore != null);
+    const averageMatchScore = appsWithScore.length > 0
+        ? Math.round(appsWithScore.reduce((acc, app) => acc + app.matchScore, 0) / appsWithScore.length) + '%'
+        : 'N/A';
 
-    const itemVariants = {
-        hidden: { opacity: 0, y: 20 },
-        visible: { opacity: 1, y: 0 }
-    };
+    if (isLoading) {
+        return <div className="text-center text-slate-500 mt-20 animate-pulse">Loading Analytics...</div>;
+    }
 
     return (
-        <motion.div
-            variants={containerVariants}
-            initial="hidden"
-            animate="visible"
-            className="space-y-8"
-        >
-            <div>
-                <h2 className="text-2xl font-bold text-white mb-2">Dashboard Overview</h2>
-                <p className="text-slate-400 text-sm">Welcome back to HireMind AI. Here's what's happening today.</p>
-            </div>
-
-            {/* Metrics Grid */}
+        <div className="space-y-8 pb-12">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {stats.map((stat, i) => (
-                    <motion.div key={i} variants={itemVariants} className={`p-6 bg-slate-800/50 backdrop-blur-md rounded-2xl border ${stat.border} hover:bg-slate-800 transition-colors group relative overflow-hidden`}>
-                        <div className={`absolute top-0 right-0 w-24 h-24 ${stat.bg} rounded-full blur-2xl -mr-8 -mt-8 transition-transform group-hover:scale-150`}></div>
-                        <div className="relative z-10">
-                            <div className="flex justify-between items-start mb-4">
-                                <div className={`p-3 rounded-xl ${stat.bg} border ${stat.border}`}>
-                                    <stat.icon className={`w-6 h-6 ${stat.color}`} />
-                                </div>
-                                <div className={`flex items-center gap-1 text-sm font-semibold ${stat.trend === 'up' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                    {stat.trend === 'up' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
-                                    {stat.change}
-                                </div>
-                            </div>
-                            <h3 className="text-slate-400 text-sm font-medium mb-1">{stat.label}</h3>
-                            <div className="text-3xl font-bold text-white">{stat.value}</div>
-                        </div>
-                    </motion.div>
-                ))}
+                <OverviewCard title="Jobs Applied" value={applications.length} icon={Briefcase} colorClass="indigo" trend="+2 this week" />
+                <OverviewCard title="Profile Completion" value={profileCompletion} icon={FileText} colorClass="purple" />
+                <OverviewCard title="Avg. Match Score" value={averageMatchScore} icon={Target} colorClass="emerald" />
+                <OverviewCard title="Shortlisted" value={applications.filter(a => a.status === 'shortlisted').length} icon={Activity} colorClass="blue" />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Score Distribution Chart (CSS) */}
-                <motion.div variants={itemVariants} className="p-6 bg-slate-800/50 backdrop-blur-md rounded-2xl border border-slate-700/50">
-                    <div className="flex justify-between items-center mb-8">
-                        <h3 className="text-lg font-bold text-white">Candidate Match Distribution</h3>
-                        <Target className="w-5 h-5 text-slate-400" />
-                    </div>
-
-                    <div className="h-72 flex items-end justify-between gap-2 pb-6 border-b border-slate-700/50 relative">
-                        {/* Y-axis labels mock */}
-                        <div className="absolute left-0 top-0 h-full flex flex-col justify-between text-xs text-slate-500 font-medium -ml-2 -mt-2">
-                            <span>250</span>
-                            <span>125</span>
-                            <span>0</span>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Recent Applications */}
+                <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-2xl p-6">
+                    <h3 className="text-xl font-bold text-white mb-6">Recent Applications</h3>
+                    {applications.length === 0 ? (
+                        <div className="text-center text-slate-500 py-8 bg-slate-800/20 rounded-xl border border-dashed border-slate-700">
+                            You haven't applied to any jobs yet. Browse jobs to get started!
                         </div>
-
-                        {distributionData.map((data, i) => (
-                            <div key={i} className="flex flex-col items-center flex-1 z-10 group cursor-pointer ml-6">
-                                <div className="text-xs text-slate-400 mb-2 opacity-0 group-hover:opacity-100 transition-opacity font-bold">{data.count}</div>
-                                <div className={`w-full max-w-[40px] ${data.height} ${data.color} rounded-t-md group-hover:opacity-80 transition-all group-hover:shadow-[0_0_15px_rgba(99,102,241,0.5)]`}></div>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="flex justify-between mt-4 ml-6 pl-2 pr-2">
-                        {distributionData.map((data, i) => (
-                            <div key={i} className="text-xs font-medium text-slate-400 text-center w-8">{data.range}</div>
-                        ))}
-                    </div>
-                </motion.div>
-
-                {/* Top Skills Chart (CSS Progress Bars) */}
-                <motion.div variants={itemVariants} className="p-6 bg-slate-800/50 backdrop-blur-md rounded-2xl border border-slate-700/50">
-                    <div className="flex justify-between items-center mb-8">
-                        <h3 className="text-lg font-bold text-white">Top Extracted Skills</h3>
-                        <BrainCircuit className="w-5 h-5 text-slate-400" />
-                    </div>
-
-                    <div className="space-y-6">
-                        {topSkills.map((item, i) => (
-                            <div key={i} className="group">
-                                <div className="flex justify-between items-center mb-2">
-                                    <span className="text-sm font-medium text-slate-300">{item.skill}</span>
-                                    <span className="text-xs font-bold text-slate-400">{item.percentage}%</span>
+                    ) : (
+                        <div className="space-y-4">
+                            {applications.slice(0, 5).map(app => (
+                                <div key={app._id} className="flex items-center justify-between p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 hover:border-slate-600 transition-colors">
+                                    <div className="flex flex-col">
+                                        <h4 className="font-bold text-white">{app.jobId?.title || 'Unknown Job'}</h4>
+                                        <p className="text-sm text-slate-400">{app.jobId?.companyId?.companyName || 'Company'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        {app.matchScore && (
+                                            <span className="text-xs font-bold bg-indigo-500/20 text-indigo-400 px-3 py-1 rounded-full border border-indigo-500/20">
+                                                {app.matchScore}% Match
+                                            </span>
+                                        )}
+                                        <span className={`text-xs font-bold px-3 py-1 rounded-full capitalize ${
+                                            app.status === 'shortlisted' ? 'bg-emerald-500/20 text-emerald-400' :
+                                            app.status === 'rejected' ? 'bg-rose-500/20 text-rose-400' :
+                                            'bg-yellow-500/20 text-yellow-500'
+                                        }`}>
+                                            {app.status || 'Pending'}
+                                        </span>
+                                    </div>
                                 </div>
-                                <div className="w-full h-2.5 bg-slate-700/50 rounded-full overflow-hidden">
-                                    <motion.div
-                                        initial={{ width: 0 }}
-                                        animate={{ width: `${item.percentage}%` }}
-                                        transition={{ duration: 1, delay: 0.2 + (i * 0.1) }}
-                                        className={`h-full rounded-full bg-gradient-to-r ${item.color} group-hover:opacity-80 transition-opacity relative`}
-                                    >
-                                        <div className="absolute top-0 right-0 bottom-0 w-20 bg-gradient-to-r from-transparent to-white/20"></div>
-                                    </motion.div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* AI Insights Panel */}
+                <div className="bg-gradient-to-br from-indigo-900/40 to-slate-900 border border-indigo-500/20 rounded-2xl p-6 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/20 blur-3xl"></div>
+                    <h3 className="text-xl font-bold text-white mb-4 flex items-center gap-2">
+                        <Target className="w-5 h-5 text-indigo-400" /> AI Insights
+                    </h3>
+                    
+                    {!profile ? (
+                        <div className="text-sm text-slate-400 bg-slate-800/50 p-4 rounded-xl">
+                            Upload your resume in the Profile tab to unlock personalized AI career insights and top job matches.
+                        </div>
+                    ) : (
+                        <div className="space-y-6">
+                            <div>
+                                <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Top Extracted Skills</h4>
+                                <div className="flex flex-wrap gap-2">
+                                    {profile.extractedSkills?.slice(0, 6).map((skill, i) => (
+                                        <span key={i} className="text-xs bg-slate-800 text-indigo-300 px-2 py-1 rounded-md border border-slate-700">
+                                            {skill}
+                                        </span>
+                                    ))}
+                                    {(profile.extractedSkills?.length || 0) > 6 && (
+                                        <span className="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded-md border border-slate-700">
+                                            +{(profile.extractedSkills?.length || 0) - 6} more
+                                        </span>
+                                    )}
                                 </div>
                             </div>
-                        ))}
-                    </div>
 
-                    <button className="w-full mt-8 py-3 rounded-xl border border-slate-700 text-slate-300 text-sm font-medium hover:bg-slate-800 hover:text-white transition-all">
-                        View Full Skill Analytics
-                    </button>
-                </motion.div>
+                            <div className="p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                                <h4 className="font-bold text-white text-sm mb-1">Career Trajectory Matches</h4>
+                                <p className="text-xs text-indigo-200/70 mb-3">Based on your semantic vector profile.</p>
+                                <button className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-bold transition-colors flex items-center justify-center gap-2">
+                                    View Recommended Jobs <ChevronRight className="w-4 h-4" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
-        </motion.div>
+        </div>
     );
 };
 
-export default Overview;
+export default CandidateOverview;
