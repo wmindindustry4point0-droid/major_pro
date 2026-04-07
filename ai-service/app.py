@@ -6,7 +6,6 @@ import string
 import requests
 import io
 
-# Initialize app
 app = Flask(__name__)
 CORS(app)
 
@@ -38,12 +37,13 @@ TECH_SKILLS = [
 ]
 
 def extract_text_from_pdf(pdf_path_or_url):
-    """Uses pdfplumber to accurately extract text from complex resume layouts, supporting both local files and URLs."""
+    """Uses pdfplumber to accurately extract text from complex resume layouts,
+    supporting both local files and URLs (including pre-signed S3 URLs)."""
     import pdfplumber
     text = ""
     try:
         if pdf_path_or_url.startswith('http://') or pdf_path_or_url.startswith('https://'):
-            response = requests.get(pdf_path_or_url)
+            response = requests.get(pdf_path_or_url, timeout=30)
             response.raise_for_status()
             pdf_file = io.BytesIO(response.content)
         else:
@@ -60,23 +60,42 @@ def extract_text_from_pdf(pdf_path_or_url):
     return text
 
 def extract_metadata(text):
-    """Extracts Name (approximate), Email, Phone, and Skills from raw text"""
+    """Extracts Name (approximate), Email, Phone, and Skills from raw text."""
     # 1. Email Extraction
     email_match = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
     email = email_match.group(0) if email_match else "Not Found"
 
     # 2. Phone Extraction
-    phone_match = re.search(r'\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}', text)
-    phone = phone_match.group(0) if phone_match else "Not Found"
+    # FIX: Extended regex to support Indian phone formats in addition to US/international.
+    # Handles: +91 XXXXX XXXXX, +91-XXXXX-XXXXX, 10-digit local, and standard 10-digit US.
+    phone_patterns = [
+        r'(?:\+91[\s\-]?)?[6-9]\d{9}',         # Indian mobile (with or without +91)
+        r'\+\d{1,3}[\s\-]?\d{3,5}[\s\-]?\d{4,6}',  # International generic
+        r'\(?\d{3}\)?[.\-\s]?\d{3}[.\-\s]?\d{4}',  # US/CA 10-digit
+    ]
+    phone = "Not Found"
+    for pattern in phone_patterns:
+        m = re.search(pattern, text)
+        if m:
+            phone = m.group(0).strip()
+            break
 
     # 3. Candidate Name Approximation
+    # FIX: More robust — skip lines that look like section headers (all-caps words),
+    # addresses (contain digits or commas), or are too long.
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     name = "Candidate"
     if lines:
-        for limit in range(min(5, len(lines))):
-            potential_name = lines[limit]
-            if len(potential_name.split()) <= 4 and '@' not in potential_name and not any(char.isdigit() for char in potential_name):
-                name = potential_name
+        for line in lines[:8]:  # check first 8 lines
+            words = line.split()
+            # A name: 2-4 words, no digits, no email, not all-caps (section header)
+            if (2 <= len(words) <= 4
+                    and '@' not in line
+                    and not any(char.isdigit() for char in line)
+                    and ',' not in line
+                    and not line.isupper()
+                    and len(line) <= 50):
+                name = line
                 break
 
     # 4. Skill Extraction via Dictionary Matching
@@ -103,6 +122,11 @@ def preprocess_text(text):
     words = text.split()
     cleaned_words = [w for w in words if w not in stop_words]
     return " ".join(cleaned_words)
+
+@app.route('/health', methods=['GET'])
+def health():
+    """Health check endpoint for Hugging Face Spaces and Render."""
+    return jsonify({"status": "ok", "model": "all-MiniLM-L6-v2"})
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -145,10 +169,7 @@ def analyze():
 
 @app.route('/extract_resume', methods=['POST'])
 def extract_resume():
-    """
-    Extracts structured metadata (Name, Email, Phone, Skills) from a single
-    candidate resume without requiring a Job Description comparison.
-    """
+    """Extracts structured metadata from a resume without job description comparison."""
     data = request.json
     r_path = data.get('resume_path', "")
 
@@ -174,10 +195,7 @@ def extract_resume():
 
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
-    """
-    Receives a batch of resume file paths, the job description, and required skills.
-    Processes them via the Pipeline and returns rankings.
-    """
+    """Batch resume screening — returns ranked results."""
     data = request.json
     resumes = data.get('resumes', [])
     job_description = data.get('job_description', "")
@@ -196,7 +214,10 @@ def analyze_batch():
         r_path = resume.get('path')
         r_fileName = resume.get('fileName')
 
-        if not (r_path.startswith('http://') or r_path.startswith('https://')) and not os.path.exists(r_path):
+        if not r_path or (
+            not (r_path.startswith('http://') or r_path.startswith('https://'))
+            and not os.path.exists(r_path)
+        ):
             results.append({
                 "id": r_id, "fileName": r_fileName,
                 "status": "Failed", "error": "File not found"
@@ -240,13 +261,11 @@ def analyze_batch():
     failed_results = [r for r in results if r['status'] == 'Failed']
 
     successful_results.sort(key=lambda x: x['matchScore'], reverse=True)
-
     for index, r in enumerate(successful_results):
         r['rank'] = index + 1
 
-    final_response = successful_results + failed_results
-
-    return jsonify({"analyzed_candidates": final_response})
+    return jsonify({"analyzed_candidates": successful_results + failed_results})
 
 if __name__ == '__main__':
+    # use_reloader=False prevents the model from loading twice in debug mode
     app.run(port=5001, debug=True, use_reloader=False)
