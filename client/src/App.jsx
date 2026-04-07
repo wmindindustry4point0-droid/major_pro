@@ -26,7 +26,7 @@ const AppContent = () => {
     const showDefaultNavbar = !hideNavbarRoutes.includes(location.pathname);
 
     return (
-        <div className={`min-h-screen font-sans transition-colors duration-300 ${
+        <div className={`min-h-screen w-full font-sans transition-colors duration-300 ${
             theme === 'dark' ? 'bg-slate-950 text-slate-100' : 'bg-slate-50 text-slate-900'
         }`}>
             {showDefaultNavbar && <Navbar />}

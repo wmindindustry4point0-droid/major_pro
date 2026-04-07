@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Full width fix ───────────────────────────────────────────────────────── */
+html, body, #root {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+}
+
 /* ── Theme CSS Variables ──────────────────────────────────────────────────── */
 :root {
     --bg-primary: #f8fafc;
@@ -119,7 +127,7 @@ html:not(.dark) .hover\:bg-slate-700:hover {
 }
 
 /* Input fields light mode */
-html:not(.dark) input, 
+html:not(.dark) input,
 html:not(.dark) textarea,
 html:not(.dark) select {
     background-color: #f8fafc !important;
