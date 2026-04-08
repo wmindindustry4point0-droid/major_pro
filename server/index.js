@@ -1,8 +1,3 @@
-/**
- * server/index.js
- * ADDED: /api/notifications route registration.
- */
-
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -53,18 +48,20 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/resume-sc
     .then(() => console.log('MongoDB connected'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// Routes
+// NEW: Register StageHistory before routes load
+require('./models/StageHistory');
+
 const authRoutes         = require('./routes/authRoutes');
 const jobRoutes          = require('./routes/jobRoutes');
 const appRoutes          = require('./routes/appRoutes');
 const candidateRoutes    = require('./routes/candidateRoutes');
-const notificationRoutes = require('./routes/notificationRoutes'); // NEW
+const notificationRoutes = require('./routes/notificationRoutes');
 
 app.use('/api/auth',          authRoutes);
 app.use('/api/jobs',          jobRoutes);
 app.use('/api/applications',  appRoutes);
 app.use('/api/candidate',     candidateRoutes);
-app.use('/api/notifications', notificationRoutes); // NEW
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/', (req, res) => res.send('API is running...'));
 
