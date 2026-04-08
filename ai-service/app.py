@@ -110,11 +110,15 @@ def extract_phone(text: str) -> str:
             return m.group(0).strip()
     return "Not Found"
 
+# ── FIXED: Added 'achievements' and similar to stop project bleeding ──────────
 SECTION_HEADERS = {
-    'experience': ['experience', 'work experience', 'employment', 'professional experience', 'work history'],
-    'education':  ['education', 'academic', 'qualification', 'degree'],
-    'projects':   ['project', 'projects', 'personal projects', 'portfolio'],
-    'skills':     ['skills', 'technical skills', 'core competencies', 'technologies'],
+    'experience':   ['experience', 'work experience', 'employment', 'professional experience', 'work history'],
+    'education':    ['education', 'academic', 'qualification', 'degree'],
+    'projects':     ['project', 'projects', 'personal projects', 'portfolio'],
+    'skills':       ['skills', 'technical skills', 'core competencies', 'technologies'],
+    'achievements': ['achievement', 'achievements', 'accomplishment', 'accomplishments',
+                     'awards', 'honors', 'honours', 'certifications', 'certification',
+                     'extra', 'extracurricular', 'activities', 'volunteer', 'leadership'],
 }
 
 def detect_section(line: str):
@@ -145,7 +149,7 @@ def duration_months(start_str: str, end_str: str) -> int:
 
 def extract_structured(text: str) -> dict:
     lines = [l.strip() for l in text.split('\n')]
-    sections = {'experience': [], 'education': [], 'projects': [], 'skills': [], 'other': []}
+    sections = {'experience': [], 'education': [], 'projects': [], 'skills': [], 'achievements': [], 'other': []}
     current = 'other'
     for line in lines:
         if not line: continue
@@ -156,12 +160,15 @@ def extract_structured(text: str) -> dict:
     experience = parse_experience(sections['experience'])
     education  = parse_education(sections['education'])
     projects   = parse_projects(sections['projects'])
-    total_months = sum(e.get('duration_months', 0) for e in experience)
+    total_months = sum(e.get('durationMonths', 0) for e in experience)
     return {
-        'experience': experience, 'education': education, 'projects': projects,
-        'total_experience_years': round(total_months / 12, 1)
+        'experience': experience,
+        'education':  education,
+        'projects':   projects,
+        'totalExperienceYears': round(total_months / 12, 1)
     }
 
+# ── parse_experience: returns camelCase keys ──────────────────────────────────
 def parse_experience(lines: list) -> list:
     results = []
     date_pat = re.compile(
@@ -171,58 +178,151 @@ def parse_experience(lines: list) -> list:
         re.IGNORECASE
     )
     current_entry, desc_lines = None, []
+
     def flush():
         if current_entry:
             current_entry['description'] = ' '.join(desc_lines).strip()
             results.append(current_entry)
+
     for line in lines:
         m = date_pat.search(line)
         if m:
             flush(); desc_lines = []
             months = duration_months(m.group(1), m.group(2))
             title_part = line[:m.start()].strip().rstrip('–-|·').strip()
-            current_entry = {'title': title_part or 'Position', 'company': '',
-                             'start_date': m.group(1), 'end_date': m.group(2), 'duration_months': months}
+            current_entry = {
+                'title':          title_part or 'Position',
+                'company':        '',
+                'startDate':      m.group(1),   # camelCase ✓
+                'endDate':        m.group(2),   # camelCase ✓
+                'durationMonths': months,        # camelCase ✓
+            }
         elif current_entry and not current_entry.get('company') and line and len(line) < 80:
-            if not any(c.isdigit() for c in line[:5]): current_entry['company'] = line
+            if not any(c.isdigit() for c in line[:5]):
+                current_entry['company'] = line
         else:
             desc_lines.append(line)
     flush()
     return results[:10]
 
-def parse_education(lines: list) -> list:
-    results = []
-    year_pat = re.compile(r'\b(19|20)\d{2}\b')
-    degree_kw = ['b.tech','b.e.','btech','be ','m.tech','mtech','bsc','msc','bachelor','master','phd','mba','diploma','b.sc','m.sc']
-    current = {}
-    for line in lines:
-        ll = line.lower()
-        is_degree = any(kw in ll for kw in degree_kw)
-        year_m = year_pat.search(line)
-        if is_degree or year_m:
-            if current: results.append(current)
-            current = {'degree': line if is_degree else '', 'institution': '',
-                       'year': int(year_m.group(0)) if year_m else None}
-        elif current and not current.get('institution') and line and len(line) < 100:
-            current['institution'] = line
-    if current: results.append(current)
-    return results[:5]
 
-def parse_projects(lines: list) -> list:
+# ── parse_education: returns camelCase keys ───────────────────────────────────
+def parse_education(lines: list) -> list:
+    year_pat  = re.compile(r'\b(19|20)\d{2}\b')
+    degree_kw = [
+        'b.tech', 'b.e.', 'btech', 'be ', 'm.tech', 'mtech',
+        'bsc', 'msc', 'bachelor', 'master', 'phd', 'mba',
+        'diploma', 'b.sc', 'm.sc', 'engineering', 'computer',
+        'bachelor of', 'master of',
+    ]
+    inst_kw = ['institute', 'university', 'college', 'school', 'academy']
+
+    def is_degree_line(l):
+        ll = l.lower()
+        return any(kw in ll for kw in degree_kw)
+
+    def is_institution_line(l):
+        ll = l.lower()
+        if any(kw in ll for kw in inst_kw):
+            return True
+        if not any(c.isdigit() for c in l) and 2 <= len(l.split()) <= 10 and len(l) < 100:
+            return True
+        return False
+
+    blocks = []
+    current_block = []
+    for line in lines:
+        if not line.strip():
+            if current_block:
+                blocks.append(current_block)
+                current_block = []
+        else:
+            current_block.append(line.strip())
+    if current_block:
+        blocks.append(current_block)
+
+    if len(blocks) == 1 and len(blocks[0]) > 5:
+        blocks = [[l] for l in blocks[0]]
+
     results = []
-    current, desc_lines = None, []
+    for block in blocks:
+        degree_line      = ''
+        institution_line = ''
+        year_val         = None
+        grade            = ''
+
+        for line in block:
+            ll = line.lower()
+            if any(p in ll for p in ['%', 'cgpa', 'gpa', 'percentage', 'grade']):
+                grade = line
+                ym = year_pat.search(line)
+                if ym and not year_val:
+                    year_val = int(ym.group(0))
+                continue
+            ym = year_pat.search(line)
+            if ym and not year_val:
+                year_val = int(ym.group(0))
+            if is_degree_line(line) and not degree_line:
+                degree_line = line
+            elif is_institution_line(line) and not institution_line and line != degree_line:
+                institution_line = line
+
+        if degree_line or institution_line:
+            results.append({
+                'degree':      degree_line,
+                'institution': institution_line,
+                'year':        year_val,
+                'grade':       grade,
+            })
+
+    seen, unique = set(), []
+    for r in results:
+        key = (r['degree'].lower()[:30], r['institution'].lower()[:30])
+        if key not in seen:
+            seen.add(key)
+            unique.append(r)
+
+    return unique[:5]
+
+
+# ── parse_projects: returns camelCase keys + digit-start guard ────────────────
+def parse_projects(lines: list) -> list:
+    BULLET_RE = re.compile(r'^[\•\-\*\▪\◦\–\—]\s*')
+
+    results    = []
+    current    = None
+    desc_lines = []
+
     def flush():
         if current:
             desc = ' '.join(desc_lines).strip()
-            results.append({'name': current['name'], 'description': desc,
-                            'tech_stack': extract_skills(desc + ' ' + current['name'])})
+            results.append({
+                'name':        current['name'],
+                'description': desc,
+                'techStack':   extract_skills(desc + ' ' + current['name']),  # camelCase ✓
+            })
+
     for line in lines:
-        if len(line) < 80 and not line.startswith(('•','-')) and len(line.split()) <= 10:
-            flush(); desc_lines = []; current = {'name': line}
+        is_bullet = bool(BULLET_RE.match(line))
+        clean     = BULLET_RE.sub('', line).strip()
+
+        if (
+            not is_bullet
+            and clean
+            and len(line) < 80
+            and len(line.split()) <= 12
+            and not clean[0].islower()    # not a sentence continuation
+            and not clean[0].isdigit()    # FIXED: reject "300+ participants." etc.
+        ):
+            flush()
+            desc_lines = []
+            current    = {'name': clean}
         else:
-            desc_lines.append(line)
+            desc_lines.append(clean if is_bullet else line)
+
     flush()
     return results[:8]
+
 
 def score_skills(candidate_skills, must_have, nice_to_have):
     cand = set(s.lower() for s in candidate_skills)
@@ -235,7 +335,9 @@ def score_skills(candidate_skills, must_have, nice_to_have):
     nice_score = len(nice_matched) / max(len(nice), 1) if nice else 1.0
     return {
         'score': must_score * 0.8 + nice_score * 0.2,
-        'must_matched': must_matched, 'nice_matched': nice_matched, 'must_missing': must_missing
+        'must_matched': must_matched,
+        'nice_matched': nice_matched,
+        'must_missing': must_missing
     }
 
 def score_experience(candidate_years, min_exp, max_exp) -> float:
@@ -245,7 +347,10 @@ def score_experience(candidate_years, min_exp, max_exp) -> float:
 
 def score_projects(projects, jd_embedding) -> float:
     if not projects or not jd_embedding: return 0.5
-    text = ' '.join(p.get('description','') + ' ' + ' '.join(p.get('tech_stack',[])) for p in projects)
+    text = ' '.join(
+        p.get('description', '') + ' ' + ' '.join(p.get('techStack', []))
+        for p in projects
+    )
     if not text.strip(): return 0.5
     vec, _ = get_embedding(preprocess(text))
     return cosine_sim(vec, jd_embedding)
@@ -298,13 +403,21 @@ def analyze():
     phone  = extract_phone(raw_text)
     skills = extract_skills(raw_text)
     structured = extract_structured(raw_text)
-    candidate_years = structured['total_experience_years']
+    candidate_years = structured['totalExperienceYears']
 
     clean_jd = preprocess(jd_text)
-    jd_embedding, jd_hash = (provided_jd_emb, None) if (provided_jd_emb and len(provided_jd_emb) > 0) else get_embedding(clean_jd)
+    jd_embedding, jd_hash = (
+        (provided_jd_emb, None)
+        if (provided_jd_emb and len(provided_jd_emb) > 0)
+        else get_embedding(clean_jd)
+    )
 
     clean_resume = preprocess(raw_text)
-    resume_embedding, resume_hash = (provided_res_emb, None) if (provided_res_emb and len(provided_res_emb) > 0) else get_embedding(clean_resume)
+    resume_embedding, resume_hash = (
+        (provided_res_emb, None)
+        if (provided_res_emb and len(provided_res_emb) > 0)
+        else get_embedding(clean_resume)
+    )
 
     semantic_score = cosine_sim(resume_embedding, jd_embedding)
     skill_result   = score_skills(skills, must_have, nice_to_have)
@@ -324,30 +437,31 @@ def analyze():
         skills, must_have, skill_result['must_matched'], skill_result['must_missing'],
         nice_missing, candidate_years, min_exp, semantic_score
     )
-
     missing_str = ', '.join(skill_result['must_missing']) if skill_result['must_missing'] else 'None'
 
     return jsonify({
-        'final_score':           final,
-        'score_breakdown':       breakdown,
-        'skills_matched':        skill_result['must_matched'] + skill_result['nice_matched'],
-        'skills_missing':        skill_result['must_missing'],
-        'strengths':             strengths,
-        'weaknesses':            weaknesses,
-        'parsed_data': {
-            'name': name, 'email': email, 'phone': phone, 'skills': skills,
-            'total_experience_years': candidate_years,
-            'experience': structured['experience'],
-            'education':  structured['education'],
-            'projects':   structured['projects']
+        'finalScore':      final,
+        'scoreBreakdown':  breakdown,
+        'skillsMatched':   skill_result['must_matched'] + skill_result['nice_matched'],
+        'skillsMissing':   skill_result['must_missing'],
+        'strengths':       strengths,
+        'weaknesses':      weaknesses,
+        'parsedData': {
+            'name':                 name,
+            'email':                email,
+            'phone':                phone,
+            'skills':               skills,
+            'totalExperienceYears': candidate_years,
+            'experience':           structured['experience'],
+            'education':            structured['education'],
+            'projects':             structured['projects'],
         },
-        'jd_embedding':          jd_embedding,
-        'resume_embedding':      resume_embedding,
-        'resume_embedding_hash': resume_hash,
-        # legacy fields
-        'match_percentage':      final,
-        'feedback':              f"Score: {final}%. Missing required skills: {missing_str}.",
-        'skills':                skills
+        'jdEmbedding':          jd_embedding,
+        'resumeEmbedding':      resume_embedding,
+        'resumeEmbeddingHash':  resume_hash,
+        'matchPercentage':      final,
+        'feedback':             f"Score: {final}%. Missing required skills: {missing_str}.",
+        'skills':               skills
     })
 
 
@@ -355,7 +469,8 @@ def analyze():
 def embed_jd():
     data = request.json
     jd_text = data.get('job_description', '')
-    if not jd_text: return jsonify({'error': 'Missing job_description'}), 400
+    if not jd_text:
+        return jsonify({'error': 'Missing job_description'}), 400
     embedding, h = get_embedding(preprocess(jd_text))
     return jsonify({'embedding': embedding, 'hash': h})
 
@@ -364,10 +479,12 @@ def embed_jd():
 def parse_resume():
     data = request.json
     resume_path = data.get('resume_path', '')
-    if not resume_path: return jsonify({'error': 'Missing resume_path'}), 400
+    if not resume_path:
+        return jsonify({'error': 'Missing resume_path'}), 400
 
     raw_text = extract_text_from_pdf(resume_path)
-    if not raw_text.strip(): return jsonify({'error': 'No parseable text'}), 400
+    if not raw_text.strip():
+        return jsonify({'error': 'No parseable text'}), 400
 
     lines      = [l.strip() for l in raw_text.split('\n') if l.strip()]
     name       = extract_name(lines)
@@ -383,10 +500,10 @@ def parse_resume():
         'email':                email,
         'phone':                phone,
         'extractedSkills':      skills,
-        'totalExperienceYears': structured['total_experience_years'],
-        'experience':           structured['experience'],
-        'education':            structured['education'],
-        'projects':             structured['projects'],
+        'totalExperienceYears': structured['totalExperienceYears'],
+        'experience':           structured['experience'],   # already camelCase ✓
+        'education':            structured['education'],    # already camelCase ✓
+        'projects':             structured['projects'],     # already camelCase ✓
         'embeddingVector':      embedding,
         'embeddingHash':        emb_hash
     })
@@ -413,8 +530,10 @@ def analyze_batch():
     jd_embedding, _ = get_embedding(preprocess(jd_text))
 
     def process_one(resume):
-        r_id, r_path, r_fileName = resume.get('id'), resume.get('path'), resume.get('fileName','')
-        res_emb = resume.get('existingEmbedding')
+        r_id       = resume.get('id')
+        r_path     = resume.get('path')
+        r_fileName = resume.get('fileName', '')
+        res_emb    = resume.get('existingEmbedding')
         try:
             raw_text = extract_text_from_pdf(r_path)
             if not raw_text.strip():
@@ -426,9 +545,12 @@ def analyze_batch():
             phone  = extract_phone(raw_text)
             skills = extract_skills(raw_text)
             structured = extract_structured(raw_text)
-            candidate_years = structured['total_experience_years']
+            candidate_years = structured['totalExperienceYears']
 
-            resume_embedding = res_emb if (res_emb and len(res_emb) > 0) else get_embedding(preprocess(raw_text))[0]
+            resume_embedding = (
+                res_emb if (res_emb and len(res_emb) > 0)
+                else get_embedding(preprocess(raw_text))[0]
+            )
 
             semantic  = cosine_sim(resume_embedding, jd_embedding)
             skill_res = score_skills(skills, must_have, nice_to_have)
@@ -436,8 +558,10 @@ def analyze_batch():
             proj_s    = score_projects(structured['projects'], jd_embedding)
 
             breakdown = {
-                'semantic':   round(semantic, 4), 'skills': round(skill_res['score'], 4),
-                'experience': round(exp_s, 4),    'projects': round(proj_s, 4)
+                'semantic':   round(semantic, 4),
+                'skills':     round(skill_res['score'], 4),
+                'experience': round(exp_s, 4),
+                'projects':   round(proj_s, 4)
             }
             final = round(sum(breakdown[k] * WEIGHTS[k] for k in WEIGHTS) * 100, 1)
             nice_missing = list(set(s.lower() for s in nice_to_have) - set(s.lower() for s in skills))
@@ -446,14 +570,24 @@ def analyze_batch():
                 nice_missing, candidate_years, min_exp, semantic
             )
             return {
-                'id': r_id, 'fileName': r_fileName, 'status': 'Success',
-                'candidateName': name, 'email': email, 'phone': phone,
-                'extractedSkills': skills, 'matchScore': final, 'finalScore': final,
-                'scoreBreakdown': breakdown,
-                'skillsMatched': skill_res['must_matched'] + skill_res['nice_matched'],
-                'missingSkills': skill_res['must_missing'],
-                'strengths': strengths, 'weaknesses': weaknesses,
-                'totalExperienceYears': candidate_years
+                'id':                   r_id,
+                'fileName':             r_fileName,
+                'status':               'Success',
+                'candidateName':        name,
+                'email':                email,
+                'phone':                phone,
+                'extractedSkills':      skills,
+                'matchScore':           final,
+                'finalScore':           final,
+                'scoreBreakdown':       breakdown,
+                'skillsMatched':        skill_res['must_matched'] + skill_res['nice_matched'],
+                'missingSkills':        skill_res['must_missing'],
+                'strengths':            strengths,
+                'weaknesses':           weaknesses,
+                'totalExperienceYears': candidate_years,
+                'experience':           structured['experience'],
+                'education':            structured['education'],
+                'projects':             structured['projects'],
             }
         except Exception as e:
             return {'id': r_id, 'fileName': r_fileName, 'status': 'Failed', 'error': str(e)}
@@ -461,9 +595,12 @@ def analyze_batch():
     with ThreadPoolExecutor(max_workers=4) as executor:
         results = list(executor.map(process_one, resumes))
 
-    successful = sorted([r for r in results if r.get('status') == 'Success'],
-                        key=lambda x: x.get('finalScore', 0), reverse=True)
-    for i, r in enumerate(successful): r['rank'] = i + 1
+    successful = sorted(
+        [r for r in results if r.get('status') == 'Success'],
+        key=lambda x: x.get('finalScore', 0), reverse=True
+    )
+    for i, r in enumerate(successful):
+        r['rank'] = i + 1
     failed = [r for r in results if r.get('status') != 'Success']
 
     return jsonify({'analyzed_candidates': successful + failed})
