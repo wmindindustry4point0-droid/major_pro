@@ -325,9 +325,12 @@ def parse_projects(lines: list) -> list:
 
 
 def score_skills(candidate_skills, must_have, nice_to_have):
-    cand = set(s.lower() for s in candidate_skills)
-    must = set(s.lower() for s in must_have)
-    nice = set(s.lower() for s in nice_to_have)
+    # BUG 3 FIX: normalize all skill lists to lowercase before comparing
+    # candidate_skills from extract_skills() are already lowercase,
+    # but must_have/nice_to_have come from job.requiredSkills (mixed case)
+    cand = set(s.lower().strip() for s in candidate_skills)
+    must = set(s.lower().strip() for s in must_have)
+    nice = set(s.lower().strip() for s in nice_to_have)
     must_matched = list(cand & must)
     nice_matched = list(cand & nice)
     must_missing = list(must - cand)
@@ -383,12 +386,18 @@ def analyze():
     data = request.json
     resume_path      = data.get('resume_path', '')
     jd_text          = data.get('job_description', '')
-    must_have        = data.get('must_have_skills', data.get('required_skills', []))
+    required_skills  = data.get('required_skills', [])
+    provided_must    = data.get('must_have_skills', [])
     nice_to_have     = data.get('nice_to_have_skills', [])
     min_exp          = float(data.get('min_experience', 0))
     max_exp          = float(data.get('max_experience', 99))
     provided_jd_emb  = data.get('jd_embedding')
     provided_res_emb = data.get('resume_embedding')
+
+    # BUG 4 FIX: if mustHaveSkills is empty (most jobs don't set it), fall back to
+    # required_skills so scoring actually compares against what the job needs.
+    # Only use provided_must when it has entries (i.e. recruiter explicitly set mustHave).
+    must_have = provided_must if provided_must else required_skills
 
     if not resume_path or not jd_text:
         return jsonify({'error': 'Missing resume_path or job_description'}), 400
