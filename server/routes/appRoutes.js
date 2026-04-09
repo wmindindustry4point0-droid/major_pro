@@ -146,11 +146,11 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
             {
                 resume_path:         signedUrl,
                 job_description:     job.description,
-                must_have_skills:    job.mustHaveSkills    || [],
-                nice_to_have_skills: job.niceToHaveSkills  || [],
-                required_skills:     job.requiredSkills    || [],
-                min_experience:      job.minExperience     || 0,
-                max_experience:      job.maxExperience     || 99,
+                must_have_skills:    job.mustHaveSkills   && job.mustHaveSkills.length > 0 ? job.mustHaveSkills : job.requiredSkills || [],
+                nice_to_have_skills: job.niceToHaveSkills || [],
+                required_skills:     job.requiredSkills   || [],
+                min_experience:      job.minExperience    || 0,
+                max_experience:      job.maxExperience    || 99,
                 jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
                 resume_embedding:    existingEmbedding
             },
@@ -161,11 +161,11 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
 
         application.status         = 'screened';
         application.screenedAt     = new Date();
-        application.finalScore     = aiData.final_score ?? aiData.match_percentage ?? null;
+        application.finalScore     = aiData.finalScore ?? aiData.matchPercentage ?? null;
         application.matchScore     = application.finalScore;
-        application.scoreBreakdown = aiData.score_breakdown || null;
-        application.skillsMatched  = aiData.skills_matched  || [];
-        application.skillsMissing  = aiData.skills_missing  || [];
+        application.scoreBreakdown = aiData.scoreBreakdown || null;
+        application.skillsMatched  = aiData.skillsMatched  || [];
+        application.skillsMissing  = aiData.skillsMissing  || [];
         application.strengths      = aiData.strengths       || [];
         application.weaknesses     = aiData.weaknesses      || [];
         application.aiFeedback     = aiData.feedback        || '';
@@ -299,19 +299,23 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
 
         const job     = application.jobId;
         const profile = await CandidateProfile.findOne({ userId: application.candidateId });
-        const existingEmbedding = (profile && profile.embeddingVector.length > 0) ? profile.embeddingVector : null;
-        const signedUrl = await getS3SignedUrl(application.resumePath, 900);
+        const existingEmbedding = (profile && profile.embeddingVector && profile.embeddingVector.length > 0) ? profile.embeddingVector : null;
+
+        // BUG 2 FIX: prefer the candidate's latest resume from their profile over the stale application resumePath
+        const resumeKey = (profile && profile.resumeS3Key) ? profile.resumeS3Key : application.resumePath;
+        const signedUrl = await getS3SignedUrl(resumeKey, 900);
 
         const response = await axios.post(
             `${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze`,
             {
                 resume_path:         signedUrl,
                 job_description:     job.description,
-                must_have_skills:    job.mustHaveSkills    || [],
-                nice_to_have_skills: job.niceToHaveSkills  || [],
-                required_skills:     job.requiredSkills    || [],
-                min_experience:      job.minExperience     || 0,
-                max_experience:      job.maxExperience     || 99,
+                // BUG 4 FIX: if mustHaveSkills is empty, fall back to requiredSkills for scoring
+                must_have_skills:    job.mustHaveSkills && job.mustHaveSkills.length > 0 ? job.mustHaveSkills : job.requiredSkills || [],
+                nice_to_have_skills: job.niceToHaveSkills || [],
+                required_skills:     job.requiredSkills   || [],
+                min_experience:      job.minExperience    || 0,
+                max_experience:      job.maxExperience    || 99,
                 jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
                 resume_embedding:    existingEmbedding
             },
@@ -319,14 +323,15 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
         );
 
         const aiData = response.data;
-        application.finalScore     = aiData.final_score ?? aiData.match_percentage ?? null;
+        // BUG 1 FIX: app.py returns camelCase keys (finalScore, scoreBreakdown, skillsMatched, skillsMissing)
+        application.finalScore     = aiData.finalScore     ?? aiData.matchPercentage ?? null;
         application.matchScore     = application.finalScore;
-        application.scoreBreakdown = aiData.score_breakdown || null;
-        application.skillsMatched  = aiData.skills_matched  || [];
-        application.skillsMissing  = aiData.skills_missing  || [];
-        application.strengths      = aiData.strengths       || [];
-        application.weaknesses     = aiData.weaknesses      || [];
-        application.aiFeedback     = aiData.feedback        || '';
+        application.scoreBreakdown = aiData.scoreBreakdown || null;
+        application.skillsMatched  = aiData.skillsMatched  || [];
+        application.skillsMissing  = aiData.skillsMissing  || [];
+        application.strengths      = aiData.strengths      || [];
+        application.weaknesses     = aiData.weaknesses     || [];
+        application.aiFeedback     = aiData.feedback       || '';
 
         if (application.status === 'applied') {
             application.status = 'screened';
