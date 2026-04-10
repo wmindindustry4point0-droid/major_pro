@@ -152,6 +152,64 @@ router.post('/register', async (req, res) => {
     }
 });
 
+// ── Settings: Update profile (name / companyName / notificationPrefs) ────────
+const { requireAuth } = require('../middleware/auth');
+
+router.patch('/me', requireAuth, async (req, res) => {
+    try {
+        const { name, companyName, notificationPrefs } = req.body;
+        const updates = {};
+        if (name         !== undefined) updates.name         = name.trim();
+        if (companyName  !== undefined) updates.companyName  = companyName.trim();
+        if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs;
+
+        const user = await User.findByIdAndUpdate(
+            req.user._id,
+            { $set: updates },
+            { new: true, runValidators: true }
+        ).select('-password');
+        if (!user) return res.status(404).json({ error: 'User not found.' });
+        res.json(user);
+    } catch (err) {
+        console.error('PATCH /me error:', err.message);
+        res.status(500).json({ error: 'Failed to update profile.' });
+    }
+});
+
+// ── Settings: Change password ─────────────────────────────────────────────────
+router.post('/change-password', requireAuth, async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+    if (!currentPassword || !newPassword)
+        return res.status(400).json({ error: 'Current and new password are required.' });
+    if (newPassword.length < 6)
+        return res.status(400).json({ error: 'New password must be at least 6 characters.' });
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ error: 'User not found.' });
+        if (!user.password)
+            return res.status(400).json({ error: 'Your account uses Google Sign-In and has no password.' });
+        const match = await bcrypt.compare(currentPassword, user.password);
+        if (!match) return res.status(401).json({ error: 'Current password is incorrect.' });
+        user.password = await bcrypt.hash(newPassword, 10);
+        await user.save();
+        res.json({ message: 'Password changed successfully.' });
+    } catch (err) {
+        console.error('change-password error:', err.message);
+        res.status(500).json({ error: 'Failed to change password.' });
+    }
+});
+
+// ── Settings: Delete account ──────────────────────────────────────────────────
+router.delete('/me', requireAuth, async (req, res) => {
+    try {
+        await User.findByIdAndDelete(req.user._id);
+        res.json({ message: 'Account deleted successfully.' });
+    } catch (err) {
+        console.error('DELETE /me error:', err.message);
+        res.status(500).json({ error: 'Failed to delete account.' });
+    }
+});
+
 // GOOGLE OAUTH
 router.get('/google', (req, res, next) => {
     const role = req.query.role === 'company' ? 'company' : 'candidate';
