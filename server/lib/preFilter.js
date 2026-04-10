@@ -1,3 +1,6 @@
+// preFilter checks whether a candidate meets the hard minimum requirements for a job.
+// It accepts either a CandidateProfile document OR a plain object with the same shape,
+// which lets callers pass freshly AI-extracted skills instead of stale cached profile data.
 function preFilter(profile, job) {
     const mustHave = job.mustHaveSkills || [];
     const minExp   = job.minExperience  || 0;

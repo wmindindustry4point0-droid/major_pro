@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Search, MapPin, Briefcase, Clock, Send, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Search, MapPin, Briefcase, Clock, Send, CheckCircle2, AlertCircle, Loader2, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -58,9 +58,9 @@ const BrowseJobs = () => {
         setApplyingTo(jobId);
 
         try {
-            // FIX: Instead of fetching the resume directly from S3 (which causes a CORS error
-            // because S3 blocks browser requests from vercel.app), we fetch it through our own
-            // backend proxy endpoint which downloads from S3 server-side and streams it back.
+            // Fetch resume through our backend proxy to avoid S3 CORS issues,
+            // then re-upload as part of the application so the server has a
+            // dedicated copy tied to this application.
             const proxyResponse = await fetch(`${API}/api/candidate/resume-proxy/${user._id}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -100,6 +100,70 @@ const BrowseJobs = () => {
         job.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
         job.companyId?.companyName?.toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    // Renders the right badge/score after a candidate has applied to a job
+    const renderAppliedState = (app) => {
+        // Pre-filter auto-rejected — score is explicitly 0 and status is rejected
+        if (app.status === 'rejected' && app.finalScore === 0) {
+            return (
+                <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-2 text-rose-400 bg-rose-500/10 px-4 py-2 rounded-xl border border-rose-500/20 font-bold text-sm">
+                        <XCircle className="w-4 h-4" /> Not Qualified
+                    </div>
+                    {app.aiFeedback && (
+                        <span className="text-xs text-rose-400/80 max-w-[200px] text-right leading-tight">
+                            {app.aiFeedback.replace('Pre-screened: ', '')}
+                        </span>
+                    )}
+                </div>
+            );
+        }
+
+        // AI analysis still running (status is still 'applied', no score yet)
+        if (app.status === 'applied' && app.finalScore == null) {
+            return (
+                <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-xl border border-emerald-500/20 font-bold text-sm">
+                        <CheckCircle2 className="w-4 h-4" /> Applied
+                    </div>
+                    <span className="flex items-center gap-1.5 text-xs text-slate-400">
+                        <Loader2 className="w-3 h-3 animate-spin" /> AI analysis in progress...
+                    </span>
+                </div>
+            );
+        }
+
+        // AI analysis failed (status still 'applied' but aiFeedback has an error message)
+        if (app.status === 'applied' && app.aiFeedback && app.finalScore == null) {
+            return (
+                <div className="flex flex-col items-end gap-2">
+                    <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-xl border border-emerald-500/20 font-bold text-sm">
+                        <CheckCircle2 className="w-4 h-4" /> Applied
+                    </div>
+                    <span className="text-xs text-yellow-400/80">Score unavailable</span>
+                </div>
+            );
+        }
+
+        // Normal: scored successfully
+        const score = app.finalScore ?? app.matchScore;
+        return (
+            <div className="flex flex-col items-end gap-2">
+                <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 px-4 py-2 rounded-xl border border-emerald-500/20 font-bold text-sm">
+                    <CheckCircle2 className="w-4 h-4" /> Applied
+                </div>
+                {score != null && (
+                    <span className={`text-xs font-bold px-2 py-1 rounded-md ${
+                        score >= 75 ? 'bg-emerald-700 text-white' :
+                        score >= 50 ? 'bg-yellow-600 text-white' :
+                        'bg-rose-700 text-white'
+                    }`}>
+                        AI Match: {Math.round(score)}%
+                    </span>
+                )}
+            </div>
+        );
+    };
 
     return (
         <div className="space-y-8 pb-12">
@@ -173,16 +237,7 @@ const BrowseJobs = () => {
 
                                 <div className="shrink-0 flex flex-col items-end gap-3 justify-center border-t md:border-t-0 md:border-l border-slate-800 pt-4 md:pt-0 md:pl-6">
                                     {hasApplied(job._id) ? (
-                                        <div className="flex flex-col items-end gap-2">
-                                            <div className="flex items-center gap-2 text-emerald-400 bg-emerald-500/10 px-6 py-3 rounded-xl border border-emerald-500/20 font-bold">
-                                                <CheckCircle2 className="w-5 h-5" /> Applied
-                                            </div>
-                                            {app?.matchScore != null && (
-                                                <span className="text-xs font-bold px-2 py-1 bg-indigo-700 text-white rounded-md">
-                                                    AI Match: {app.matchScore}%
-                                                </span>
-                                            )}
-                                        </div>
+                                        renderAppliedState(app)
                                     ) : (
                                         <button
                                             onClick={() => handleApply(job._id)}

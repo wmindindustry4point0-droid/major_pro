@@ -45,6 +45,12 @@ const MyApplications = () => {
     const scoreBg    = (s) => s >= 75 ? 'bg-emerald-500' : s >= 55 ? 'bg-yellow-500' : 'bg-rose-500';
     const score      = (app) => app.finalScore ?? app.matchScore;
 
+    // True if this application was auto-rejected by the pre-filter (score explicitly 0)
+    const isPreFiltered = (app) => app.status === 'rejected' && app.finalScore === 0;
+
+    // True if AI analysis is still pending (applied but no score yet, no error feedback)
+    const isPending = (app) => app.status === 'applied' && score(app) == null;
+
     const headingColor = isDark ? 'text-white'      : 'text-slate-900';
     const subColor     = isDark ? 'text-slate-400'  : 'text-slate-500';
     const cardBg       = isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm';
@@ -58,6 +64,76 @@ const MyApplications = () => {
             <p className="animate-pulse text-sm">Loading Applications...</p>
         </div>
     );
+
+    // Renders the AI score cell — handles all 4 states cleanly
+    const renderScoreCell = (app) => {
+        const s = score(app);
+
+        // Pre-filter rejection: show reason instead of a misleading 0%
+        if (isPreFiltered(app)) {
+            return (
+                <div className="flex flex-col gap-1">
+                    <span className={`text-xs font-semibold ${isDark?'text-rose-400':'text-rose-600'}`}>Not Qualified</span>
+                    {app.aiFeedback && (
+                        <span className={`text-xs leading-tight max-w-[180px] ${isDark?'text-slate-500':'text-slate-400'}`}>
+                            {app.aiFeedback.replace('Pre-screened: ', '')}
+                        </span>
+                    )}
+                </div>
+            );
+        }
+
+        // AI still running
+        if (isPending(app)) {
+            return (
+                <span className={`text-xs flex items-center gap-1 ${isDark?'text-slate-500':'text-slate-400'}`}>
+                    <Loader2 className="w-3 h-3 animate-spin"/> Analyzing...
+                </span>
+            );
+        }
+
+        // Score present
+        if (s != null) {
+            return (
+                <div className="flex items-center gap-2">
+                    <div className={`w-16 h-1.5 rounded-full overflow-hidden ${isDark?'bg-slate-800':'bg-slate-200'}`}>
+                        <div className={`h-full rounded-full ${scoreBg(s)}`} style={{width:`${s}%`}}/>
+                    </div>
+                    <span className={`font-bold text-sm ${scoreColor(s)}`}>{s.toFixed(0)}%</span>
+                </div>
+            );
+        }
+
+        // Fallback: analysis failed silently
+        return <span className={`text-xs ${isDark?'text-slate-600':'text-slate-400'}`}>Unavailable</span>;
+    };
+
+    // Same logic but compact for mobile cards
+    const renderScoreMobile = (app) => {
+        const s = score(app);
+
+        if (isPreFiltered(app)) {
+            return <span className={`text-xs font-semibold ${isDark?'text-rose-400':'text-rose-600'}`}>Not Qualified</span>;
+        }
+        if (isPending(app)) {
+            return (
+                <span className={`text-xs flex items-center gap-1 ${isDark?'text-slate-500':'text-slate-400'}`}>
+                    <Loader2 className="w-3 h-3 animate-spin"/> Analyzing...
+                </span>
+            );
+        }
+        if (s != null) {
+            return (
+                <div className="flex items-center gap-2">
+                    <div className={`w-14 h-1.5 rounded-full overflow-hidden ${isDark?'bg-slate-800':'bg-slate-200'}`}>
+                        <div className={`h-full rounded-full ${scoreBg(s)}`} style={{width:`${s}%`}}/>
+                    </div>
+                    <span className={`font-bold text-xs ${scoreColor(s)}`}>{s.toFixed(0)}%</span>
+                </div>
+            );
+        }
+        return <span className={`text-xs ${isDark?'text-slate-600':'text-slate-400'}`}>Unavailable</span>;
+    };
 
     return (
         <div className="space-y-6 sm:space-y-8 pb-12">
@@ -102,9 +178,8 @@ const MyApplications = () => {
                             <tbody className={`divide-y ${divColor}`}>
                                 {applications.map(app => {
                                     const c    = cfg(app.status);
-                                    const s    = score(app);
                                     const isEx = expanded === app._id;
-                                    const hasBreakdown = app.scoreBreakdown || app.strengths?.length > 0;
+                                    const hasBreakdown = app.scoreBreakdown || app.strengths?.length > 0 || app.weaknesses?.length > 0;
                                     return (
                                         <React.Fragment key={app._id}>
                                             <tr className={`transition-colors ${c.row} ${rowHover}`}>
@@ -123,14 +198,7 @@ const MyApplications = () => {
                                                     <span className="flex items-center gap-2"><Clock className="w-4 h-4 opacity-60"/>{new Date(app.appliedAt).toLocaleDateString()}</span>
                                                 </td>
                                                 <td className="p-6">
-                                                    {s != null ? (
-                                                        <div className="flex items-center gap-2">
-                                                            <div className={`w-16 h-1.5 rounded-full overflow-hidden ${isDark?'bg-slate-800':'bg-slate-200'}`}>
-                                                                <div className={`h-full rounded-full ${scoreBg(s)}`} style={{width:`${s}%`}}/>
-                                                            </div>
-                                                            <span className={`font-bold text-sm ${scoreColor(s)}`}>{s.toFixed(0)}%</span>
-                                                        </div>
-                                                    ) : <span className={`text-xs ${isDark?'text-slate-600':'text-slate-400'}`}>Pending</span>}
+                                                    {renderScoreCell(app)}
                                                 </td>
                                                 <td className="p-6 text-right">
                                                     <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border ${c.cls}`}>{c.icon}{c.label}</span>
@@ -193,7 +261,6 @@ const MyApplications = () => {
                     <div className="sm:hidden space-y-3">
                         {applications.map(app => {
                             const c = cfg(app.status);
-                            const s = score(app);
                             return (
                                 <div key={app._id} className={`border rounded-2xl p-4 ${cardBg} ${c.row}`}>
                                     <div className="flex items-start justify-between gap-3 mb-3">
@@ -210,15 +277,14 @@ const MyApplications = () => {
                                     </div>
                                     <div className="flex items-center justify-between">
                                         <span className={`flex items-center gap-1 text-xs ${subColor}`}><Clock className="w-3 h-3"/>{new Date(app.appliedAt).toLocaleDateString()}</span>
-                                        {s != null ? (
-                                            <div className="flex items-center gap-2">
-                                                <div className={`w-14 h-1.5 rounded-full overflow-hidden ${isDark?'bg-slate-800':'bg-slate-200'}`}>
-                                                    <div className={`h-full rounded-full ${scoreBg(s)}`} style={{width:`${s}%`}}/>
-                                                </div>
-                                                <span className={`font-bold text-xs ${scoreColor(s)}`}>{s.toFixed(0)}%</span>
-                                            </div>
-                                        ) : <span className={`text-xs ${isDark?'text-slate-600':'text-slate-400'}`}>Pending</span>}
+                                        {renderScoreMobile(app)}
                                     </div>
+                                    {/* Show rejection reason on mobile too */}
+                                    {isPreFiltered(app) && app.aiFeedback && (
+                                        <p className={`mt-2 text-xs leading-tight ${isDark?'text-slate-500':'text-slate-400'}`}>
+                                            {app.aiFeedback.replace('Pre-screened: ', '')}
+                                        </p>
+                                    )}
                                 </div>
                             );
                         })}

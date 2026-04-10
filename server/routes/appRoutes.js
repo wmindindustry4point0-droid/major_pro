@@ -106,9 +106,56 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
 
         const profile = await CandidateProfile.findOne({ userId: candidateId });
 
-        // Pre-filter check — only if mustHaveSkills defined on job
-        if (profile && job.mustHaveSkills && job.mustHaveSkills.length > 0) {
-            const filterResult = preFilter(profile, job);
+        // ── Step 1: Run AI extraction on the freshly uploaded resume first ──────
+        // We do this BEFORE the pre-filter so the pre-filter uses fresh AI-extracted
+        // skills from this exact resume, not stale cached profile skills.
+        // This fixes the root cause of score = 0: pre-filter was using old cached
+        // extractedSkills which may not match the job's mustHaveSkills terminology.
+        const signedUrl = await getS3SignedUrl(s3Key, 900);
+
+        const existingEmbedding = (profile && profile.embeddingVector && profile.embeddingVector.length > 0)
+            ? profile.embeddingVector : null;
+
+        let aiData;
+        try {
+            const aiResponse = await axios.post(
+                `${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze`,
+                {
+                    resume_path:         signedUrl,
+                    job_description:     job.description,
+                    must_have_skills:    job.mustHaveSkills   && job.mustHaveSkills.length > 0 ? job.mustHaveSkills : job.requiredSkills || [],
+                    nice_to_have_skills: job.niceToHaveSkills || [],
+                    required_skills:     job.requiredSkills   || [],
+                    min_experience:      job.minExperience    || 0,
+                    max_experience:      job.maxExperience    || 99,
+                    jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
+                    resume_embedding:    existingEmbedding
+                },
+                { timeout: 90000 }
+            );
+            aiData = aiResponse.data;
+        } catch (aiErr) {
+            // ── FIX: Silent catch replaced — mark the application so candidate
+            // knows analysis failed instead of being stuck silently forever ──────
+            console.error('AI service error during analysis:', aiErr.message);
+            await Application.findByIdAndUpdate(applicationId, {
+                aiFeedback: `AI analysis failed: ${aiErr.message}. Please contact support or re-apply.`
+            }).catch(console.error);
+            return;
+        }
+
+        // ── Step 2: Pre-filter using FRESH skills extracted from this resume ────
+        // Build a fresh profile-like object using the AI's parsed data from this
+        // exact resume upload, not the stale cached profile.extractedSkills.
+        const freshSkills = (aiData.parsedData?.skills || aiData.skills || []);
+        const freshExp    = aiData.parsedData?.totalExperienceYears ?? (profile?.totalExperienceYears || 0);
+
+        if (job.mustHaveSkills && job.mustHaveSkills.length > 0) {
+            const freshProfileForFilter = {
+                extractedSkills:      freshSkills,
+                totalExperienceYears: freshExp
+            };
+            const filterResult = preFilter(freshProfileForFilter, job);
             if (!filterResult.pass) {
                 application.status       = 'rejected';
                 application.rejectedAt   = new Date();
@@ -130,35 +177,13 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
                     userId: candidateId,
                     type: 'status_rejected',
                     title: 'Application Update',
-                    message: `Your application for "${job.title}" did not meet the minimum requirements.`
+                    message: `Your application for "${job.title}" did not meet the minimum requirements: ${filterResult.reason}`
                 }).catch(console.error);
                 return;
             }
         }
 
-        const existingEmbedding = (profile && profile.embeddingVector && profile.embeddingVector.length > 0)
-            ? profile.embeddingVector : null;
-
-        const signedUrl = await getS3SignedUrl(s3Key, 900);
-
-        const aiResponse = await axios.post(
-            `${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze`,
-            {
-                resume_path:         signedUrl,
-                job_description:     job.description,
-                must_have_skills:    job.mustHaveSkills   && job.mustHaveSkills.length > 0 ? job.mustHaveSkills : job.requiredSkills || [],
-                nice_to_have_skills: job.niceToHaveSkills || [],
-                required_skills:     job.requiredSkills   || [],
-                min_experience:      job.minExperience    || 0,
-                max_experience:      job.maxExperience    || 99,
-                jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
-                resume_embedding:    existingEmbedding
-            },
-            { timeout: 90000 }
-        );
-
-        const aiData = aiResponse.data;
-
+        // ── Step 3: Save AI scoring results ─────────────────────────────────────
         application.status         = 'screened';
         application.screenedAt     = new Date();
         application.finalScore     = aiData.finalScore ?? aiData.matchPercentage ?? null;
@@ -171,15 +196,27 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
         application.aiFeedback     = aiData.feedback        || '';
         await application.save();
 
-        // Cache JD embedding back to Job if not already stored
-        if (aiData.jd_embedding && (!job.jdEmbeddingVector || job.jdEmbeddingVector.length === 0)) {
-            Job.findByIdAndUpdate(job._id, { jdEmbeddingVector: aiData.jd_embedding }).catch(console.error);
+        // ── FIX: Embedding cache uses correct camelCase keys returned by app.py ─
+        // app.py returns: jdEmbedding, resumeEmbedding, resumeEmbeddingHash
+        // (NOT jd_embedding / resume_embedding / resume_embedding_hash)
+        if (aiData.jdEmbedding && (!job.jdEmbeddingVector || job.jdEmbeddingVector.length === 0)) {
+            Job.findByIdAndUpdate(job._id, { jdEmbeddingVector: aiData.jdEmbedding }).catch(console.error);
         }
-        // Cache resume embedding back to CandidateProfile
-        if (profile && aiData.resume_embedding && profile.embeddingVector.length === 0) {
+        if (profile && aiData.resumeEmbedding && profile.embeddingVector.length === 0) {
             CandidateProfile.findOneAndUpdate(
                 { userId: candidateId },
-                { embeddingVector: aiData.resume_embedding, embeddingHash: aiData.resume_embedding_hash }
+                { embeddingVector: aiData.resumeEmbedding, embeddingHash: aiData.resumeEmbeddingHash }
+            ).catch(console.error);
+        }
+
+        // Also update the candidate's profile with fresh extracted skills from this resume
+        if (profile && freshSkills.length > 0) {
+            CandidateProfile.findOneAndUpdate(
+                { userId: candidateId },
+                {
+                    extractedSkills:      freshSkills,
+                    totalExperienceYears: freshExp
+                }
             ).catch(console.error);
         }
 
@@ -200,6 +237,10 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
 
     } catch (err) {
         console.error('Background AI analysis error:', err.message);
+        // Ensure the application is never silently stuck — mark it so candidate sees feedback
+        Application.findByIdAndUpdate(applicationId, {
+            aiFeedback: `Analysis error: ${err.message}`
+        }).catch(console.error);
     }
 }
 
@@ -301,7 +342,7 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
         const profile = await CandidateProfile.findOne({ userId: application.candidateId });
         const existingEmbedding = (profile && profile.embeddingVector && profile.embeddingVector.length > 0) ? profile.embeddingVector : null;
 
-        // BUG 2 FIX: prefer the candidate's latest resume from their profile over the stale application resumePath
+        // Prefer the candidate's latest resume from their profile over the stale application resumePath
         const resumeKey = (profile && profile.resumeS3Key) ? profile.resumeS3Key : application.resumePath;
         const signedUrl = await getS3SignedUrl(resumeKey, 900);
 
@@ -310,7 +351,6 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
             {
                 resume_path:         signedUrl,
                 job_description:     job.description,
-                // BUG 4 FIX: if mustHaveSkills is empty, fall back to requiredSkills for scoring
                 must_have_skills:    job.mustHaveSkills && job.mustHaveSkills.length > 0 ? job.mustHaveSkills : job.requiredSkills || [],
                 nice_to_have_skills: job.niceToHaveSkills || [],
                 required_skills:     job.requiredSkills   || [],
@@ -323,7 +363,6 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
         );
 
         const aiData = response.data;
-        // BUG 1 FIX: app.py returns camelCase keys (finalScore, scoreBreakdown, skillsMatched, skillsMissing)
         application.finalScore     = aiData.finalScore     ?? aiData.matchPercentage ?? null;
         application.matchScore     = application.finalScore;
         application.scoreBreakdown = aiData.scoreBreakdown || null;
@@ -338,6 +377,17 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
             application.screenedAt = new Date();
         }
         await application.save();
+
+        // ── FIX: Correct camelCase keys for embedding cache ──────────────────
+        if (aiData.jdEmbedding && (!job.jdEmbeddingVector || job.jdEmbeddingVector.length === 0)) {
+            Job.findByIdAndUpdate(job._id, { jdEmbeddingVector: aiData.jdEmbedding }).catch(console.error);
+        }
+        if (profile && aiData.resumeEmbedding && profile.embeddingVector.length === 0) {
+            CandidateProfile.findOneAndUpdate(
+                { userId: application.candidateId },
+                { embeddingVector: aiData.resumeEmbedding, embeddingHash: aiData.resumeEmbeddingHash }
+            ).catch(console.error);
+        }
 
         Notification.create({
             userId: application.candidateId,
