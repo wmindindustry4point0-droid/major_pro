@@ -102,13 +102,39 @@ router.get('/', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Delete Job ───────────────────────────────────────────────────────────────
+// ── Delete Job (Bug #2 fix — cascading delete of applications + StageHistory) ─
 router.delete('/:id', requireAuth, requireRole('company'), async (req, res) => {
     try {
+        const Application  = require('../models/Application');
+        const StageHistory = require('../models/StageHistory');
+
         const job = await Job.findById(req.params.id);
         if (!job) return res.status(404).json({ error: 'Job not found.' });
         if (job.companyId.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied.' });
+
+        // Bug #13 fix: Notify applicants their application is being removed
+        const apps = await Application.find({ jobId: req.params.id }, '_id candidateId');
+        if (apps.length > 0) {
+            const appIds = apps.map(a => a._id);
+            const candidateIds = apps.map(a => a.candidateId);
+
+            // Delete stage history for all applications under this job
+            await StageHistory.deleteMany({ applicationId: { $in: appIds } });
+
+            // Notify candidates their application was removed (Bug #13)
+            const notifs = candidateIds.map(cid => ({
+                userId: cid,
+                type: 'job_deleted',
+                title: 'Job No Longer Available',
+                message: `The job "${job.title}" you applied to has been removed by the recruiter.`
+            }));
+            Notification.insertMany(notifs, { ordered: false }).catch(e => console.error('Notify error:', e.message));
+
+            // Delete all applications for this job
+            await Application.deleteMany({ jobId: req.params.id });
+        }
+
         await Job.findByIdAndDelete(req.params.id);
         res.json({ message: 'Job deleted successfully.' });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -203,13 +229,26 @@ router.get('/workspaces/:companyId', requireAuth, requireRole('company'), async 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Bug #9 fix: Strip companyId from req.body to prevent ownership hijacking
 router.put('/workspaces/:id', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const workspace = await AIWorkspace.findById(req.params.id);
         if (!workspace) return res.status(404).json({ error: 'Workspace not found' });
         if (workspace.companyId.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied.' });
-        const updated = await AIWorkspace.findByIdAndUpdate(req.params.id, req.body, { new: true });
+
+        // Explicitly whitelist allowed fields — never pass raw req.body
+        const { name, jobDescription, results, requiredSkills, mustHaveSkills, niceToHaveSkills, minExperience } = req.body;
+        const safeUpdate = {};
+        if (name             !== undefined) safeUpdate.name             = name;
+        if (jobDescription   !== undefined) safeUpdate.jobDescription   = jobDescription;
+        if (results          !== undefined) safeUpdate.results          = results;
+        if (requiredSkills   !== undefined) safeUpdate.requiredSkills   = requiredSkills;
+        if (mustHaveSkills   !== undefined) safeUpdate.mustHaveSkills   = mustHaveSkills;
+        if (niceToHaveSkills !== undefined) safeUpdate.niceToHaveSkills = niceToHaveSkills;
+        if (minExperience    !== undefined) safeUpdate.minExperience    = minExperience;
+
+        const updated = await AIWorkspace.findByIdAndUpdate(req.params.id, safeUpdate, { new: true });
         res.json(updated);
     } catch (err) { res.status(400).json({ error: err.message }); }
 });

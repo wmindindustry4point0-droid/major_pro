@@ -7,6 +7,30 @@ const Otp = require('../models/Otp');
 const { sendOtpEmail } = require('../mailer');
 const { signToken } = require('../middleware/auth');
 
+// ── Simple in-memory OTP rate limiter (Bug #11 fix) ──────────────────────────
+// Tracks attempts per email per purpose. Resets on successful verify.
+const otpAttempts = new Map(); // key: "email:purpose" => { count, resetAt }
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
+function checkOtpRateLimit(email, purpose) {
+    const key = `${email}:${purpose}`;
+    const now = Date.now();
+    const entry = otpAttempts.get(key);
+    if (entry && now < entry.resetAt) {
+        if (entry.count >= OTP_MAX_ATTEMPTS) return false; // blocked
+        entry.count += 1;
+    } else {
+        otpAttempts.set(key, { count: 1, resetAt: now + OTP_WINDOW_MS });
+    }
+    return true;
+}
+
+function resetOtpRateLimit(email, purpose) {
+    otpAttempts.delete(`${email}:${purpose}`);
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 const saveOtp = async (email, purpose) => {
@@ -41,21 +65,32 @@ router.post('/send-otp', async (req, res) => {
 router.post('/verify-register', async (req, res) => {
     const { email, otp, name, password, role, companyName } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
+
+    // Bug #11: Rate limit OTP verification attempts
+    if (!checkOtpRateLimit(email.toLowerCase().trim(), 'register')) {
+        return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
+    }
+
     try {
         const record = await Otp.findOne({ email: email.toLowerCase().trim(), purpose: 'register' });
         if (!record) return res.status(400).json({ error: 'OTP not found or already used. Please request a new one.' });
         if (new Date() > record.expiresAt) return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
         if (record.otp !== otp) return res.status(400).json({ error: 'Invalid OTP. Please try again.' });
+
+        resetOtpRateLimit(email.toLowerCase().trim(), 'register');
         await Otp.deleteOne({ _id: record._id });
+
         const existing = await User.findOne({ email: email.toLowerCase().trim() });
         if (existing) return res.status(409).json({ error: 'Account already exists. Please log in.' });
+
         const hashedPassword = await bcrypt.hash(password, 10);
         const user = await User.create({
             name: name.trim(),
             email: email.toLowerCase().trim(),
             password: hashedPassword,
             role,
-            companyName: role === 'company' ? companyName?.trim() : '',
+            // Bug #16 fix: store undefined for candidates, not empty string
+            companyName: role === 'company' ? companyName?.trim() : undefined,
             isEmailVerified: true
         });
         const token = signToken(user);
@@ -73,7 +108,6 @@ router.post('/send-login-otp', async (req, res) => {
     const { email } = req.body;
     if (!email) return res.status(400).json({ error: 'Email is required.' });
     try {
-        // FIX: User.findOne moved inside try/catch so DB errors are properly handled
         const user = await User.findOne({ email: email.toLowerCase().trim() });
         if (!user) return res.status(404).json({ error: 'No account found with this email.' });
         const otp = await saveOtp(email.toLowerCase().trim(), 'login');
@@ -89,12 +123,21 @@ router.post('/send-login-otp', async (req, res) => {
 router.post('/verify-login-otp', async (req, res) => {
     const { email, otp } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
+
+    // Bug #11: Rate limit OTP verification attempts
+    if (!checkOtpRateLimit(email.toLowerCase().trim(), 'login')) {
+        return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
+    }
+
     try {
         const record = await Otp.findOne({ email: email.toLowerCase().trim(), purpose: 'login' });
         if (!record) return res.status(400).json({ error: 'OTP not found or already used.' });
         if (new Date() > record.expiresAt) return res.status(400).json({ error: 'OTP has expired.' });
         if (record.otp !== otp) return res.status(400).json({ error: 'Invalid OTP.' });
+
+        resetOtpRateLimit(email.toLowerCase().trim(), 'login');
         await Otp.deleteOne({ _id: record._id });
+
         const user = await User.findOne({ email: email.toLowerCase().trim() });
         if (!user) return res.status(404).json({ error: 'User not found.' });
         const token = signToken(user);
@@ -124,7 +167,6 @@ router.post('/login', async (req, res) => {
 });
 
 // CLASSIC REGISTER → returns JWT
-// FIX: isEmailVerified explicitly set to false (consistent, honest default)
 router.post('/register', async (req, res) => {
     const { name, email, password, role, companyName } = req.body;
     try {
@@ -138,7 +180,8 @@ router.post('/register', async (req, res) => {
             email: email.toLowerCase().trim(),
             password: hashedPassword,
             role,
-            companyName: role === 'company' ? companyName?.trim() : '',
+            // Bug #16 fix: store undefined for candidates, not empty string
+            companyName: role === 'company' ? companyName?.trim() : undefined,
             isEmailVerified: false
         });
         await user.save();
@@ -152,16 +195,16 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// ── Settings: Update profile (name / companyName / notificationPrefs) ────────
+// ── Settings: Update profile ──────────────────────────────────────────────────
 const { requireAuth } = require('../middleware/auth');
 
 router.patch('/me', requireAuth, async (req, res) => {
     try {
         const { name, companyName, notificationPrefs } = req.body;
         const updates = {};
-        if (name         !== undefined) updates.name         = name.trim();
-        if (companyName  !== undefined) updates.companyName  = companyName.trim();
-        if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs;
+        if (name              !== undefined) updates.name              = name.trim();
+        if (companyName       !== undefined) updates.companyName       = companyName.trim();
+        if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs; // Bug #12 now persists
 
         const user = await User.findByIdAndUpdate(
             req.user._id,
@@ -199,11 +242,69 @@ router.post('/change-password', requireAuth, async (req, res) => {
     }
 });
 
-// ── Settings: Delete account ──────────────────────────────────────────────────
+// ── Settings: Delete account (Bug #1 fix — full cascading deletion) ───────────
 router.delete('/me', requireAuth, async (req, res) => {
     try {
-        await User.findByIdAndDelete(req.user._id);
-        res.json({ message: 'Account deleted successfully.' });
+        const userId = req.user._id;
+        const userRole = req.user.role;
+
+        // Load models here to avoid circular deps at module level
+        const Application  = require('../models/Application');
+        const StageHistory = require('../models/StageHistory');
+        const CandidateProfile = require('../models/CandidateProfile');
+        const Notification = require('../models/Notification');
+        const AIWorkspace  = require('../models/AIWorkspace');
+        const Job          = require('../models/Job');
+
+        if (userRole === 'candidate') {
+            // Find all applications by this candidate
+            const apps = await Application.find({ candidateId: userId }, '_id');
+            const appIds = apps.map(a => a._id);
+
+            // Delete stage history for those applications
+            if (appIds.length > 0) {
+                await StageHistory.deleteMany({ applicationId: { $in: appIds } });
+            }
+
+            // Delete all applications
+            await Application.deleteMany({ candidateId: userId });
+
+            // Delete candidate profile
+            await CandidateProfile.deleteOne({ userId });
+
+        } else if (userRole === 'company') {
+            // Find all jobs owned by this company
+            const jobs = await Job.find({ companyId: userId }, '_id');
+            const jobIds = jobs.map(j => j._id);
+
+            if (jobIds.length > 0) {
+                // Find all applications for those jobs
+                const apps = await Application.find({ jobId: { $in: jobIds } }, '_id');
+                const appIds = apps.map(a => a._id);
+
+                // Delete stage history for those applications
+                if (appIds.length > 0) {
+                    await StageHistory.deleteMany({ applicationId: { $in: appIds } });
+                }
+
+                // Delete all applications for this company's jobs
+                await Application.deleteMany({ jobId: { $in: jobIds } });
+            }
+
+            // Delete all jobs
+            await Job.deleteMany({ companyId: userId });
+
+            // Delete AI workspaces
+            await AIWorkspace.deleteMany({ companyId: userId });
+        }
+
+        // Delete all notifications for this user
+        await Notification.deleteMany({ userId });
+
+        // Finally delete the user
+        await User.findByIdAndDelete(userId);
+
+        res.json({ message: 'Account and all associated data deleted successfully.' });
     } catch (err) {
         console.error('DELETE /me error:', err.message);
         res.status(500).json({ error: 'Failed to delete account.' });
