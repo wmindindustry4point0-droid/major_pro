@@ -1,3 +1,151 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Full width fix ───────────────────────────────────────────────────────── */
+html, body, #root {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
+}
+
+/* ── Theme CSS Variables ──────────────────────────────────────────────────── */
+:root {
+    --bg-primary: #f8fafc;
+    --bg-secondary: #f1f5f9;
+    --bg-card: #ffffff;
+    --border-color: #e2e8f0;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --sidebar-bg: rgba(255,255,255,0.95);
+    --header-bg: rgba(255,255,255,0.85);
+    --input-bg: #f8fafc;
+    --input-border: #cbd5e1;
+}
+
+html.dark {
+    --bg-primary: #020617;
+    --bg-secondary: #0f172a;
+    --bg-card: rgba(15, 23, 42, 0.8);
+    --border-color: #1e293b;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --text-muted: #475569;
+    --sidebar-bg: rgba(15, 23, 42, 0.85);
+    --header-bg: rgba(15, 23, 42, 0.75);
+    --input-bg: #1e293b;
+    --input-border: #334155;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Scrollbar */
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+html.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+html.light .custom-scrollbar::-webkit-scrollbar-thumb,
+:root:not(.dark) .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+/* Mobile sidebar overlay */
+.sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 40;
+    backdrop-filter: blur(2px);
+}
+
+::selection { background: rgba(99, 102, 241, 0.3); }
+
+/* ── Light Mode Dashboard Overrides ──────────────────────────────────────── */
+html:not(.dark) .dashboard-surface {
+    background: white !important;
+    border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .bg-slate-800\/50,
+html:not(.dark) .bg-slate-800\/40,
+html:not(.dark) .bg-slate-800\/30,
+html:not(.dark) .bg-slate-900\/50,
+html:not(.dark) .bg-slate-900\/30 {
+    background-color: rgba(248, 250, 252, 0.9) !important;
+}
+
+html:not(.dark) .bg-slate-800 {
+    background-color: #f1f5f9 !important;
+}
+
+html:not(.dark) .bg-slate-900 {
+    background-color: #ffffff !important;
+}
+
+html:not(.dark) .border-slate-700,
+html:not(.dark) .border-slate-700\/50,
+html:not(.dark) .border-slate-800,
+html:not(.dark) .border-slate-800\/50 {
+    border-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .text-white {
+    color: #0f172a !important;
+}
+
+html:not(.dark) .text-slate-100 {
+    color: #1e293b !important;
+}
+
+html:not(.dark) .text-slate-200 {
+    color: #334155 !important;
+}
+
+html:not(.dark) .text-slate-300 {
+    color: #475569 !important;
+}
+
+html:not(.dark) .text-slate-400 {
+    color: #64748b !important;
+}
+
+html:not(.dark) .text-slate-500 {
+    color: #94a3b8 !important;
+}
+
+html:not(.dark) .hover\:bg-slate-800:hover {
+    background-color: #e2e8f0 !important;
+}
+
+html:not(.dark) .hover\:bg-slate-700:hover {
+    background-color: #f1f5f9 !important;
+}
+
+/* Input fields light mode */
+html:not(.dark) input,
+html:not(.dark) textarea,
+html:not(.dark) select {
+    background-color: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+    color: #0f172a !important;
+}
+
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+    color: #94a3b8 !important;
+}
+
+/* Keep accent colors the same in both modes */
+html:not(.dark) .text-indigo-400 { color: #6366f1 !important; }
+html:not(.dark) .text-purple-400 { color: #a855f7 !important; }
+html:not(.dark) .text-emerald-400 { color: #10b981 !important; }
+html:not(.dark) .text-rose-400 { color: #f43f5e !important; }
+html:not(.dark) .text-amber-400 { color: #f59e0b !important; }
+html:not(.dark) .text-blue-400 { color: #3b82f6 !important; }
+html:not(.dark) .text-pink-400 { color: #ec4899 !important; }
+html:not(.dark) .text-green-400 { color: #22c55e !important; }

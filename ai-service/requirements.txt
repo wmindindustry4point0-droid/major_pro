@@ -4,9 +4,6 @@ pdfplumber
 nltk
 sentence-transformers
 scikit-learn
-torch
 numpy
-pandas
 gunicorn
 requests
-bcryptjs

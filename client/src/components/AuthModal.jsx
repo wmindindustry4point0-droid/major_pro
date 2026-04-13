@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Briefcase, User, ArrowRight, Loader2, Mail, ShieldCheck } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// Google "G" SVG icon
 const GoogleIcon = () => (
     <svg viewBox="0 0 24 24" className="w-5 h-5" xmlns="http://www.w3.org/2000/svg">
         <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -22,8 +20,11 @@ const slideVariants = {
     exit: { opacity: 0, x: -20, transition: { duration: 0.2 } }
 };
 
+const redirectToDashboard = (role) => {
+    window.location.href = role === 'company' ? '/company-dashboard' : '/candidate-dashboard';
+};
+
 const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
-    // Views: 'role' | 'login' | 'register' | 'otp-register' | 'otp-login'
     const [view, setView] = useState(initialView);
     const [selectedRole, setSelectedRole] = useState(null);
     const [formData, setFormData] = useState({ name: '', email: '', password: '', companyName: '' });
@@ -31,14 +32,29 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
     const [error, setError] = useState('');
     const [success, setSuccess] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [loginMode, setLoginMode] = useState('password'); // 'password' | 'otp'
-
-    const navigate = useNavigate();
+    const [loginMode, setLoginMode] = useState('password');
 
     React.useEffect(() => {
         if (isOpen) {
-            setView(initialView);
-            setSelectedRole(initialView === 'role' ? null : 'candidate');
+            // Map initialView prop to valid internal view + role
+            if (initialView === 'recruiter') {
+                setView('register');
+                setSelectedRole('company');
+            } else if (initialView === 'candidate') {
+                setView('register');
+                setSelectedRole('candidate');
+            } else if (initialView === 'login') {
+                setView('login');
+                setSelectedRole(null);
+            } else if (initialView === 'register') {
+                setView('register');
+                setSelectedRole('candidate');
+            } else {
+                // 'role' or any unrecognised value → show role selector
+                setView('role');
+                setSelectedRole(null);
+            }
+
             setFormData({ name: '', email: '', password: '', companyName: '' });
             setOtp('');
             setError('');
@@ -65,9 +81,9 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                 email: formData.email,
                 password: formData.password
             });
-            localStorage.setItem('user', JSON.stringify(res.data));
-            onClose();
-            navigate(res.data.role === 'company' ? '/company-dashboard' : '/candidate-dashboard');
+            localStorage.setItem('token', res.data.token);
+            localStorage.setItem('user', JSON.stringify(res.data.user));
+            redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
             setIsLoading(false);
@@ -97,9 +113,9 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
         setError('');
         try {
             const res = await axios.post(`${API}/api/auth/verify-login-otp`, { email: formData.email, otp });
-            localStorage.setItem('user', JSON.stringify(res.data));
-            onClose();
-            navigate(res.data.role === 'company' ? '/company-dashboard' : '/candidate-dashboard');
+            localStorage.setItem('token', res.data.token);
+            localStorage.setItem('user', JSON.stringify(res.data.user));
+            redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Invalid or expired OTP.');
             setIsLoading(false);
@@ -134,7 +150,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
         setIsLoading(true);
         setError('');
         try {
-            await axios.post(`${API}/api/auth/verify-register`, {
+            const res = await axios.post(`${API}/api/auth/verify-register`, {
                 email: formData.email,
                 otp,
                 name: formData.name,
@@ -142,14 +158,9 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                 role: selectedRole,
                 companyName: formData.companyName
             });
-            // Auto-login after successful registration
-            const loginRes = await axios.post(`${API}/api/auth/login`, {
-                email: formData.email,
-                password: formData.password
-            });
-            localStorage.setItem('user', JSON.stringify(loginRes.data));
-            onClose();
-            navigate(loginRes.data.role === 'company' ? '/company-dashboard' : '/candidate-dashboard');
+            localStorage.setItem('token', res.data.token);
+            localStorage.setItem('user', JSON.stringify(res.data.user));
+            redirectToDashboard(res.data.user.role);
         } catch (err) {
             setError(err.response?.data?.error || 'Invalid or expired OTP.');
             setIsLoading(false);
@@ -158,12 +169,10 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
 
     // ── Google OAuth ────────────────────────────────────────────────────────────
     const handleGoogleLogin = () => {
-        // Pass the selected role so the server creates the account with the right role
         const role = selectedRole || 'candidate';
         window.location.href = `${API}/api/auth/google?role=${role}`;
     };
 
-    // ── Shared input className ──────────────────────────────────────────────────
     const inputCls = "w-full bg-slate-800/50 border border-slate-700/50 text-white p-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-transparent transition-all placeholder-slate-500";
     const labelCls = "block text-slate-300 text-sm font-semibold mb-1.5 ml-1";
 
@@ -184,14 +193,11 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                     exit={{ scale: 0.95, opacity: 0 }}
                     onClick={(e) => e.stopPropagation()}
                 >
-                    <button
-                        onClick={onClose}
-                        className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors z-10"
-                    >
+                    <button onClick={onClose} className="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors z-10">
                         <X className="w-5 h-5" />
                     </button>
 
-                    <div className="p-8">
+                    <div className="p-5 sm:p-8">
                         <AnimatePresence mode="wait">
 
                             {/* ── ROLE SELECT ─────────────────────────────────── */}
@@ -242,11 +248,7 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                                         </button>
                                     </div>
 
-                                    {/* Google OAuth Button */}
-                                    <button
-                                        onClick={handleGoogleLogin}
-                                        className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-800 font-semibold py-3 px-4 rounded-xl transition-all mb-4"
-                                    >
+                                    <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-800 font-semibold py-3 px-4 rounded-xl transition-all mb-4">
                                         <GoogleIcon />
                                         Continue with Google
                                     </button>
@@ -257,18 +259,11 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                                         <div className="flex-1 h-px bg-slate-700" />
                                     </div>
 
-                                    {/* Toggle: Password / OTP */}
                                     <div className="flex bg-slate-800 rounded-xl p-1 mb-5">
-                                        <button
-                                            onClick={() => setLoginMode('password')}
-                                            className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${loginMode === 'password' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                                        >
+                                        <button onClick={() => setLoginMode('password')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${loginMode === 'password' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                                             Password
                                         </button>
-                                        <button
-                                            onClick={() => setLoginMode('otp')}
-                                            className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${loginMode === 'otp' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
-                                        >
+                                        <button onClick={() => setLoginMode('otp')} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${loginMode === 'otp' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                                             Email OTP
                                         </button>
                                     </div>
@@ -365,7 +360,6 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
                                         </button>
                                     </div>
 
-                                    {/* Google OAuth */}
                                     <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-100 text-slate-800 font-semibold py-3 px-4 rounded-xl transition-all mb-4">
                                         <GoogleIcon />
                                         Sign up with Google

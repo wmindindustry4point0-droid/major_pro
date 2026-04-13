@@ -2,50 +2,79 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const session = require('express-session'); // ← ADD
+const session = require('express-session');
 
 dotenv.config();
 
-const app = express();
+if (!process.env.SESSION_SECRET) throw new Error('SESSION_SECRET environment variable is not set. Server cannot start safely.');
+
+const app  = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://major-pro-omega.vercel.app',
+    process.env.CLIENT_URL,
+].filter(Boolean);
+
 app.use(cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+        callback(new Error(`CORS: origin '${origin}' is not allowed.`));
+    },
     credentials: true
 }));
+
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
-// Session middleware — required for Passport OAuth handshake (state verification)
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'hiremind_secret_key',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    cookie: { secure: false } // set to true in production with HTTPS
+    cookie: {
+        secure:   process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax'
+    }
 }));
 
-// Passport (Google OAuth)
 const passport = require('./passport');
 app.use(passport.initialize());
-app.use(passport.session()); // ← ADD (needed for OAuth state verification)
+app.use(passport.session());
 
-// Database Connection
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/resume-screener')
     .then(() => console.log('MongoDB connected'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// Routes
-const authRoutes = require('./routes/authRoutes');
-const jobRoutes = require('./routes/jobRoutes');
-const appRoutes = require('./routes/appRoutes');
-const candidateRoutes = require('./routes/candidateRoutes');
+// NEW: Register StageHistory before routes load
+require('./models/StageHistory');
 
-app.use('/api/auth', authRoutes);
-app.use('/api/jobs', jobRoutes);
-app.use('/api/applications', appRoutes);
-app.use('/api/candidate', candidateRoutes);
+const authRoutes         = require('./routes/authRoutes');
+const jobRoutes          = require('./routes/jobRoutes');
+const appRoutes          = require('./routes/appRoutes');
+const candidateRoutes    = require('./routes/candidateRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+
+app.use('/api/auth',          authRoutes);
+app.use('/api/jobs',          jobRoutes);
+app.use('/api/applications',  appRoutes);
+app.use('/api/candidate',     candidateRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/', (req, res) => res.send('API is running...'));
+
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+    if (err.name === 'MulterError')
+        return res.status(400).json({ error: `File upload error: ${err.message}` });
+    if (err.message?.toLowerCase().includes('pdf'))
+        return res.status(400).json({ error: err.message });
+    if (err.message?.startsWith('CORS:'))
+        return res.status(403).json({ error: err.message });
+    console.error('Unhandled server error:', err);
+    res.status(500).json({ error: 'Internal server error.' });
+});
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

@@ -1,8 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const OAuthCallback = () => {
-    const navigate = useNavigate();
     const didRun = useRef(false);
 
     useEffect(() => {
@@ -15,28 +13,35 @@ const OAuthCallback = () => {
 
             if (!data) {
                 console.error('OAuthCallback: no data param found');
-                navigate('/', { replace: true });
+                window.location.href = '/';
                 return;
             }
 
-            const user = JSON.parse(atob(data));
-            console.log('OAuthCallback: user decoded successfully', user);
+            const parsed = JSON.parse(atob(data));
 
-            localStorage.setItem('user', JSON.stringify(user));
+            // FIX: guard against malformed payload — if token or user is missing,
+            // don't silently store undefined values which break ProtectedRoute
+            if (!parsed.token || !parsed.user) {
+                console.error('OAuthCallback: missing token or user in decoded payload', parsed);
+                window.location.href = '/';
+                return;
+            }
 
-            // Small timeout ensures React Router is fully mounted before navigating
-            setTimeout(() => {
-                navigate(
-                    user.role === 'company' ? '/company-dashboard' : '/candidate-dashboard',
-                    { replace: true }
-                );
-            }, 100);
+            localStorage.setItem('token', parsed.token);
+            localStorage.setItem('user', JSON.stringify(parsed.user));
+
+            // FIX: redirect immediately after storing — do not call any React state
+            // setters after this point, as a re-render could fire ProtectedRoute
+            // before the href navigation completes
+            window.location.href = parsed.user.role === 'company'
+                ? '/company-dashboard'
+                : '/candidate-dashboard';
 
         } catch (err) {
-            console.error('OAuthCallback: failed to parse user data', err);
-            navigate('/', { replace: true });
+            console.error('OAuthCallback: failed to parse data', err);
+            window.location.href = '/';
         }
-    }, [navigate]);
+    }, []);
 
     return (
         <div className="min-h-screen bg-slate-950 flex items-center justify-center">
