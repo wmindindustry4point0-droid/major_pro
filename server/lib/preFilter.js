@@ -1,7 +1,10 @@
 // preFilter checks whether a candidate meets the hard minimum requirements for a job.
 // It accepts either a CandidateProfile document OR a plain object with the same shape,
 // which lets callers pass freshly AI-extracted skills instead of stale cached profile data.
-function preFilter(profile, job) {
+//
+// mustHaveThreshold: fraction of must-have skills the candidate must match (default 1.0 = 100%).
+// Set to a lower value (e.g. 0.8) for roles where some flexibility is acceptable.
+function preFilter(profile, job, { mustHaveThreshold = 1.0 } = {}) {
     const mustHave = job.mustHaveSkills || [];
     const minExp   = job.minExperience  || 0;
 
@@ -12,7 +15,7 @@ function preFilter(profile, job) {
     const mustMatches = mustHave.filter(s => candidateSkills.includes(s.toLowerCase().trim()));
     const skillRatio  = mustMatches.length / mustHave.length;
 
-    if (skillRatio < 0.5) {
+    if (skillRatio < mustHaveThreshold) {
         const missing = mustHave.filter(s => !candidateSkills.includes(s.toLowerCase().trim()));
         return {
             pass: false,

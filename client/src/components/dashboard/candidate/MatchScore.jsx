@@ -59,7 +59,16 @@ const MatchScore = () => {
         };
     };
 
-    const parseMissingSkills = (feedbackStr) => {
+    const parseMissingSkills = (app) => {
+        // Prefer the structured array field returned by the AI service
+        if (Array.isArray(app.skillsMissing) && app.skillsMissing.length > 0) {
+            return app.skillsMissing.map(s => (typeof s === 'string' ? s : String(s)).trim()).filter(Boolean);
+        }
+        if (Array.isArray(app.missingSkills) && app.missingSkills.length > 0) {
+            return app.missingSkills.map(s => (typeof s === 'string' ? s : String(s)).trim()).filter(Boolean);
+        }
+        // Legacy: fall back to parsing the free-text aiFeedback string
+        const feedbackStr = app.aiFeedback;
         if (!feedbackStr) return [];
         const match = feedbackStr.match(/Missing skills:\s*(.*)/i);
         if (match && match[1]) {
@@ -118,7 +127,7 @@ const MatchScore = () => {
                 <div className="grid grid-cols-1 gap-4 sm:gap-6">
                     {applications.map(app => {
                         const scoreData = getScoreColor(app.matchScore);
-                        const missingSkills = parseMissingSkills(app.aiFeedback);
+                        const missingSkills = parseMissingSkills(app);
 
                         const jobSkills = (app.jobId?.requiredSkills || []).map(extractSkillString).filter(Boolean);
                         const candidateSkills = (profile?.extractedSkills || []).map(extractSkillString).filter(Boolean);

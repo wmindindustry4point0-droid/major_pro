@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     BrainCircuit, Plus, Settings2, FileText, Users, Target, Download,
@@ -70,9 +70,12 @@ const ResumeAnalyzer = ({ user }) => {
             const newWorkspace = {
                 companyId: user._id,
                 name: `AI Hiring Workspace ${savedWorkspaces.length + 1}`,
-                jobTitle: 'Machine Learning Engineer',
-                jobDescription: 'We are looking for an ML Engineer to build and deploy generative models...',
-                requiredSkills: ['Python', 'Machine Learning', 'TensorFlow'],
+                // BUG 15 FIX: Use current form state, not hardcoded defaults.
+                // Fall back to defaults only when fields are still empty.
+                jobTitle: jobTitle.trim() || 'New Position',
+                jobDescription: jobDescription.trim() || 'Enter job description...',
+                skillsInput: skillsInput.trim() || '',
+                requiredSkills: requiredSkills.length > 0 ? requiredSkills : [],
                 status: 'Draft'
             };
             const res = await axios.post(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/jobs/workspaces`, newWorkspace, { headers: authHeader });
@@ -156,7 +159,10 @@ const ResumeAnalyzer = ({ user }) => {
     };
 
     const handleStatusChange = (candidateId, newStatus) =>
-        setAnalysisResults(prev => prev.map(c => c.id === candidateId ? { ...c, candidateStatus: newStatus } : c));
+        setAnalysisResults(prev => prev.map(c =>
+            (c.id === candidateId || c._id === candidateId)
+                ? { ...c, candidateStatus: newStatus } : c
+        ));
 
     const openCandidateModal  = (c) => { setSelectedCandidate(c); setIsModalOpen(true); };
     const closeCandidateModal = () => { setIsModalOpen(false); setTimeout(() => setSelectedCandidate(null), 300); };
@@ -171,10 +177,51 @@ const ResumeAnalyzer = ({ user }) => {
         return type === 'text' ? `text-${c}-400` : `bg-${c}-500`;
     };
 
-    const getCandidateFileUrl = (fileName) => {
+    // BUG 9 FIX: Memoize blob URLs and revoke them on unmount to prevent memory leaks.
+    // Previously, URL.createObjectURL was called on every render inside getCandidateFileUrl.
+    const blobUrlMapRef = useRef({});
+    useEffect(() => {
+        return () => {
+            // Revoke all blob URLs when component unmounts
+            Object.values(blobUrlMapRef.current).forEach(url => URL.revokeObjectURL(url));
+            blobUrlMapRef.current = {};
+        };
+    }, []);
+    // Also revoke stale URLs when selectedFiles changes
+    useEffect(() => {
+        const validNames = new Set(selectedFiles.map(f => f.name));
+        Object.keys(blobUrlMapRef.current).forEach(name => {
+            if (!validNames.has(name)) {
+                URL.revokeObjectURL(blobUrlMapRef.current[name]);
+                delete blobUrlMapRef.current[name];
+            }
+        });
+    }, [selectedFiles]);
+
+    const getCandidateFileUrl = useCallback((fileName) => {
+        if (!fileName) return null;
         const f = selectedFiles.find(f => f.name === fileName);
-        return f ? URL.createObjectURL(f) : null;
-    };
+        if (!f) return null;
+        if (!blobUrlMapRef.current[fileName]) {
+            blobUrlMapRef.current[fileName] = URL.createObjectURL(f);
+        }
+        return blobUrlMapRef.current[fileName];
+    }, [selectedFiles]);
+
+    // BUG 11 FIX: Mobile dropdown ref — must be declared here (before any early
+    // return) to satisfy React's Rules of Hooks. Hooks cannot be called after a
+    // conditional return statement.
+    const mobileDropdownRef = useRef(null);
+    useEffect(() => {
+        if (!mobileTabOpen) return;
+        const handleOutsideClick = (e) => {
+            if (mobileDropdownRef.current && !mobileDropdownRef.current.contains(e.target)) {
+                setMobileTabOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleOutsideClick);
+        return () => document.removeEventListener('mousedown', handleOutsideClick);
+    }, [mobileTabOpen]);
 
     const fadeProps = { initial: { opacity: 0, y: 10 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -10 }, transition: { duration: 0.2 } };
 
@@ -462,7 +509,24 @@ const ResumeAnalyzer = ({ user }) => {
                 <h4 className={`font-bold mb-1 sm:mb-2 text-sm sm:text-base ${heading}`}>CSV Pipeline Export</h4>
                 <p className={`text-xs sm:text-sm ${sub}`}>Download full candidate dataset including rankings & gaps</p>
             </div>
-            <div className={`border p-6 sm:p-8 rounded-2xl text-center transition-colors group relative overflow-hidden ${analysisResults.length > 0 ? `cursor-pointer ${isDark ? 'border-indigo-500/30 bg-slate-800/40 hover:bg-slate-800' : 'border-indigo-200 bg-white hover:bg-indigo-50 shadow-sm'}` : `opacity-50 cursor-not-allowed ${isDark ? 'border-slate-800 bg-slate-800/40' : 'border-gray-100 bg-white'}`}`}>
+            <div onClick={() => {
+                if (!analysisResults.length) return;
+                const shortlisted = analysisResults.filter(r => r.candidateStatus === 'Shortlisted');
+                if (!shortlisted.length) return;
+                const headers = ['Rank','Candidate Name','Email','Phone','Match Score','Skills Found','Missing Skills','Status'];
+                const rows = shortlisted.map(r => [
+                    r.rank || 'N/A', r.candidateName || 'Unknown', r.email || 'N/A', r.phone || 'N/A',
+                    r.matchScore ? `${r.matchScore}%` : 'N/A',
+                    (r.extractedSkills || []).join('; '),
+                    (r.missingSkills || []).join('; '),
+                    r.candidateStatus
+                ]);
+                const csv = 'data:text/csv;charset=utf-8,' + headers.join(',') + '\n' + rows.map(r => r.join(',')).join('\n');
+                const link = document.createElement('a');
+                link.setAttribute('href', encodeURI(csv));
+                link.setAttribute('download', `hiremind_shortlisted_${Date.now()}.csv`);
+                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+            }} className={`border p-6 sm:p-8 rounded-2xl text-center transition-colors group relative overflow-hidden ${analysisResults.length > 0 ? `cursor-pointer ${isDark ? 'border-indigo-500/30 bg-slate-800/40 hover:bg-slate-800' : 'border-indigo-200 bg-white hover:bg-indigo-50 shadow-sm'}` : `opacity-50 cursor-not-allowed ${isDark ? 'border-slate-800 bg-slate-800/40' : 'border-gray-100 bg-white'}`}`}>
                 <Target className={`w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-3 sm:mb-4 ${analysisResults.length > 0 ? 'text-indigo-400 group-hover:scale-110 transition-transform' : muted}`} />
                 <h4 className={`font-bold mb-1 sm:mb-2 text-sm sm:text-base ${heading}`}>Export Shortlisted</h4>
                 <p className={`text-xs sm:text-sm ${sub}`}>Download top 20% matches</p>
@@ -524,6 +588,7 @@ const ResumeAnalyzer = ({ user }) => {
 
     // ── Workspace view ────────────────────────────────────────────────────────
     const activeTabObj = tabs.find(t => t.id === activeTab);
+
     return (
         <div className="space-y-4 sm:space-y-6 pb-10 sm:pb-12">
             {/* Header */}
@@ -542,7 +607,7 @@ const ResumeAnalyzer = ({ user }) => {
             {/* Tab bar — mobile: dropdown, desktop: pill row */}
             <div className="relative">
                 {/* Mobile dropdown */}
-                <div className="sm:hidden">
+                <div className="sm:hidden" ref={mobileDropdownRef}>
                     <button onClick={() => setMobileTabOpen(!mobileTabOpen)}
                         className={`w-full flex items-center justify-between px-4 py-3 rounded-xl border font-semibold text-sm ${isDark ? 'bg-slate-900 border-slate-700 text-white' : 'bg-white border-gray-200 text-gray-800 shadow-sm'}`}>
                         <span className="flex items-center gap-2">
