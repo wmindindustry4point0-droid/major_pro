@@ -86,13 +86,20 @@ def extract_skills(text: str) -> list:
     return sorted([s for s in TECH_SKILLS if re.search(r'\b' + re.escape(s) + r'\b', text_lower)])
 
 def extract_name(lines: list) -> str:
-    for line in lines[:8]:
+    for line in lines[:12]:  # scan more lines to handle whitespace/headers
+        line = line.strip()
+        if not line:
+            continue
         words = line.split()
-        if (2 <= len(words) <= 4 and '@' not in line
+        if (2 <= len(words) <= 5          # allow middle names
+                and '@' not in line
                 and not any(c.isdigit() for c in line)
-                and ',' not in line and not line.isupper() and len(line) <= 50):
-            return line
-    return "Candidate"
+                and ',' not in line
+                and ':' not in line
+                and len(line) <= 60
+                and not any(kw in line.lower() for kw in ['resume', 'curriculum', 'vitae', 'cv', 'profile', 'summary'])):
+            return line.title()           # normalize ALL-CAPS names
+    return "Unknown"
 
 def extract_email(text: str) -> str:
     m = re.search(r'[\w\.-]+@[\w\.-]+\.\w+', text)
@@ -100,7 +107,7 @@ def extract_email(text: str) -> str:
 
 def extract_phone(text: str) -> str:
     patterns = [
-        r'(?:\+91[\s\-]?)?[6-9]\d{9}',
+        r'(?<!\d)(?:\+91[\s\-]?)?[6-9]\d{9}(?!\d)',   # Indian numbers with word boundaries
         r'\+\d{1,3}[\s\-]?\d{3,5}[\s\-]?\d{4,6}',
         r'\(?\d{3}\)?[.\-\s]?\d{3}[.\-\s]?\d{4}',
     ]
@@ -538,13 +545,11 @@ def analyze_batch():
 
     jd_embedding, _ = get_embedding(preprocess(jd_text))
 
-    def process_one(resume):
+    def process_one_with_text(resume, raw_text):
         r_id       = resume.get('id')
-        r_path     = resume.get('path')
         r_fileName = resume.get('fileName', '')
         res_emb    = resume.get('existingEmbedding')
         try:
-            raw_text = extract_text_from_pdf(r_path)
             if not raw_text.strip():
                 return {'id': r_id, 'fileName': r_fileName, 'status': 'Failed', 'error': 'No parseable text'}
 
@@ -591,6 +596,7 @@ def analyze_batch():
                 'scoreBreakdown':       breakdown,
                 'skillsMatched':        skill_res['must_matched'] + skill_res['nice_matched'],
                 'missingSkills':        skill_res['must_missing'],
+                'skillsMissing':        skill_res['must_missing'],  # structured array for MatchScore.jsx
                 'strengths':            strengths,
                 'weaknesses':           weaknesses,
                 'totalExperienceYears': candidate_years,
@@ -601,8 +607,20 @@ def analyze_batch():
         except Exception as e:
             return {'id': r_id, 'fileName': r_fileName, 'status': 'Failed', 'error': str(e)}
 
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        results = list(executor.map(process_one, resumes))
+    # BUG 17 FIX: Python's GIL means ThreadPoolExecutor gives no speedup for
+    # CPU-bound work like BERT encoding (model.encode). Threads just add context-
+    # switching overhead. I/O-bound work (PDF download) is genuinely parallel, so
+    # we use a small thread pool only for the PDF fetching step, then run BERT
+    # inference sequentially. This avoids the GIL bottleneck while still
+    # parallelising network I/O.
+    def fetch_pdf_text(resume):
+        text = extract_text_from_pdf(resume['path'])
+        return (resume, text)
+
+    with ThreadPoolExecutor(max_workers=min(8, len(resumes))) as io_executor:
+        resume_texts = list(io_executor.map(fetch_pdf_text, resumes))
+
+    results = [process_one_with_text(resume, text) for resume, text in resume_texts]
 
     successful = sorted(
         [r for r in results if r.get('status') == 'Success'],

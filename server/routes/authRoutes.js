@@ -5,29 +5,39 @@ const passport = require('passport');
 const User = require('../models/User');
 const Otp = require('../models/Otp');
 const { sendOtpEmail } = require('../mailer');
-const { signToken } = require('../middleware/auth');
+const { signToken, requireAuth } = require('../middleware/auth');
 
-// ── Simple in-memory OTP rate limiter (Bug #11 fix) ──────────────────────────
-// Tracks attempts per email per purpose. Resets on successful verify.
-const otpAttempts = new Map(); // key: "email:purpose" => { count, resetAt }
+// ── MongoDB-backed OTP rate limiter ───────────────────────────────────────────
+// Stores attempt counts in the Otp collection so they survive server restarts
+// and horizontal scale-out. Each attempt increments a counter on the Otp document.
 const OTP_MAX_ATTEMPTS = 5;
-const OTP_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const OTP_WINDOW_MS    = 15 * 60 * 1000; // 15 minutes
 
-function checkOtpRateLimit(email, purpose) {
-    const key = `${email}:${purpose}`;
+async function checkOtpRateLimit(email, purpose) {
+    const key = email.toLowerCase().trim();
+    const rateLimitDoc = await Otp.findOne({ email: key, purpose: `ratelimit_${purpose}` });
     const now = Date.now();
-    const entry = otpAttempts.get(key);
-    if (entry && now < entry.resetAt) {
-        if (entry.count >= OTP_MAX_ATTEMPTS) return false; // blocked
-        entry.count += 1;
+    if (rateLimitDoc) {
+        if (rateLimitDoc.expiresAt < new Date()) {
+            // Window expired — delete stale doc and allow
+            await Otp.deleteOne({ _id: rateLimitDoc._id });
+            return true;
+        }
+        if (rateLimitDoc.otp >= OTP_MAX_ATTEMPTS) return false; // blocked
+        await Otp.updateOne({ _id: rateLimitDoc._id }, { $inc: { otp: 1 } });
     } else {
-        otpAttempts.set(key, { count: 1, resetAt: now + OTP_WINDOW_MS });
+        await Otp.create({
+            email: key,
+            purpose: `ratelimit_${purpose}`,
+            otp: 1, // repurpose otp field as counter string
+            expiresAt: new Date(now + OTP_WINDOW_MS)
+        });
     }
     return true;
 }
 
-function resetOtpRateLimit(email, purpose) {
-    otpAttempts.delete(`${email}:${purpose}`);
+async function resetOtpRateLimit(email, purpose) {
+    await Otp.deleteOne({ email: email.toLowerCase().trim(), purpose: `ratelimit_${purpose}` });
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -67,7 +77,7 @@ router.post('/verify-register', async (req, res) => {
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
 
     // Bug #11: Rate limit OTP verification attempts
-    if (!checkOtpRateLimit(email.toLowerCase().trim(), 'register')) {
+    if (!await checkOtpRateLimit(email.toLowerCase().trim(), 'register')) {
         return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
     }
 
@@ -77,7 +87,7 @@ router.post('/verify-register', async (req, res) => {
         if (new Date() > record.expiresAt) return res.status(400).json({ error: 'OTP has expired. Please request a new one.' });
         if (record.otp !== otp) return res.status(400).json({ error: 'Invalid OTP. Please try again.' });
 
-        resetOtpRateLimit(email.toLowerCase().trim(), 'register');
+        await resetOtpRateLimit(email.toLowerCase().trim(), 'register');
         await Otp.deleteOne({ _id: record._id });
 
         const existing = await User.findOne({ email: email.toLowerCase().trim() });
@@ -125,7 +135,7 @@ router.post('/verify-login-otp', async (req, res) => {
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
 
     // Bug #11: Rate limit OTP verification attempts
-    if (!checkOtpRateLimit(email.toLowerCase().trim(), 'login')) {
+    if (!await checkOtpRateLimit(email.toLowerCase().trim(), 'login')) {
         return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
     }
 
@@ -135,7 +145,7 @@ router.post('/verify-login-otp', async (req, res) => {
         if (new Date() > record.expiresAt) return res.status(400).json({ error: 'OTP has expired.' });
         if (record.otp !== otp) return res.status(400).json({ error: 'Invalid OTP.' });
 
-        resetOtpRateLimit(email.toLowerCase().trim(), 'login');
+        await resetOtpRateLimit(email.toLowerCase().trim(), 'login');
         await Otp.deleteOne({ _id: record._id });
 
         const user = await User.findOne({ email: email.toLowerCase().trim() });
@@ -196,8 +206,6 @@ router.post('/register', async (req, res) => {
 });
 
 // ── Settings: Update profile ──────────────────────────────────────────────────
-const { requireAuth } = require('../middleware/auth');
-
 router.patch('/me', requireAuth, async (req, res) => {
     try {
         const { name, companyName, notificationPrefs } = req.body;

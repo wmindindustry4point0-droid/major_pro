@@ -238,11 +238,16 @@ router.put('/workspaces/:id', requireAuth, requireRole('company'), async (req, r
             return res.status(403).json({ error: 'Access denied.' });
 
         // Explicitly whitelist allowed fields — never pass raw req.body
-        const { name, jobDescription, results, requiredSkills, mustHaveSkills, niceToHaveSkills, minExperience } = req.body;
+        const { name, jobTitle, jobDescription, analysisResults, results, requiredSkills, mustHaveSkills, niceToHaveSkills, minExperience, skillsInput, status } = req.body;
         const safeUpdate = {};
         if (name             !== undefined) safeUpdate.name             = name;
+        if (jobTitle         !== undefined) safeUpdate.jobTitle         = jobTitle;
         if (jobDescription   !== undefined) safeUpdate.jobDescription   = jobDescription;
-        if (results          !== undefined) safeUpdate.results          = results;
+        if (skillsInput      !== undefined) safeUpdate.skillsInput      = skillsInput;
+        // Accept both 'analysisResults' (frontend) and 'results' (legacy)
+        if (analysisResults  !== undefined) safeUpdate.analysisResults  = analysisResults;
+        if (results          !== undefined) safeUpdate.analysisResults  = results;
+        if (status           !== undefined) safeUpdate.status           = status;
         if (requiredSkills   !== undefined) safeUpdate.requiredSkills   = requiredSkills;
         if (mustHaveSkills   !== undefined) safeUpdate.mustHaveSkills   = mustHaveSkills;
         if (niceToHaveSkills !== undefined) safeUpdate.niceToHaveSkills = niceToHaveSkills;

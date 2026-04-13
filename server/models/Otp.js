@@ -2,14 +2,14 @@ const mongoose = require('mongoose');
 
 const OtpSchema = new mongoose.Schema({
     email:     { type: String, required: true },
-    otp:       { type: String, required: true },
-    purpose:   { type: String, enum: ['register', 'login'], required: true },
+    // For OTP docs: stores the 6-digit code (String).
+    // For rate-limit docs (purpose starts with 'ratelimit_'): stores attempt count (Number stored as mixed).
+    otp:       { type: mongoose.Schema.Types.Mixed, required: true },
+    purpose:   { type: String, required: true }, // 'register' | 'login' | 'ratelimit_register' | 'ratelimit_login'
     expiresAt: { type: Date, required: true }
 });
 
-// FIX: TTL index tells MongoDB to automatically delete expired OTP documents.
-// expireAfterSeconds: 0 means "delete the document at the expiresAt datetime".
-// Without this, expired OTPs accumulate in the collection indefinitely.
+// TTL index: MongoDB auto-deletes documents at expiresAt.
 OtpSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 // Compound index for fast lookup during verification
