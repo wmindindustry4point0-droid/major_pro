@@ -19,4 +19,5 @@ COPY app.py .
 
 EXPOSE 7860
 
+# GROQ_API_KEY is injected at runtime via HF Space secret — never hardcode it here
 CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--timeout", "120", "--workers", "1", "app:app"]
