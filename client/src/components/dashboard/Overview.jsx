@@ -29,11 +29,9 @@ const CandidateOverview = () => {
     useEffect(() => {
         const fetchDashboardData = async () => {
             try {
-                const token = localStorage.getItem('token');
-            const authHeader = { Authorization: `Bearer ${token}` };
-            const [profileRes, appRes] = await Promise.all([
-                    axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`, { headers: authHeader }).catch(() => ({ data: null })),
-                    axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/applications/candidate/${user._id}`, { headers: authHeader })
+                const [profileRes, appRes] = await Promise.all([
+                    axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/candidate/profile/${user._id}`).catch(() => ({ data: null })),
+                    axios.get(`${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/applications/candidate/${user._id}`)
                 ]);
                 
                 setProfile(profileRes.data);
@@ -48,9 +46,8 @@ const CandidateOverview = () => {
     }, [user._id]);
 
     const profileCompletion = profile ? (profile.extractedSkills?.length > 0 ? '100%' : '60%') : '0%';
-    const appsWithScore = applications.filter(a => a.matchScore != null);
-    const averageMatchScore = appsWithScore.length > 0
-        ? Math.round(appsWithScore.reduce((acc, app) => acc + app.matchScore, 0) / appsWithScore.length) + '%'
+    const averageMatchScore = applications.length > 0
+        ? Math.round(applications.reduce((acc, app) => acc + (app.matchScore || 0), 0) / applications.length) + '%'
         : 'N/A';
 
     if (isLoading) {
@@ -63,7 +60,7 @@ const CandidateOverview = () => {
                 <OverviewCard title="Jobs Applied" value={applications.length} icon={Briefcase} colorClass="indigo" trend="+2 this week" />
                 <OverviewCard title="Profile Completion" value={profileCompletion} icon={FileText} colorClass="purple" />
                 <OverviewCard title="Avg. Match Score" value={averageMatchScore} icon={Target} colorClass="emerald" />
-                <OverviewCard title="Shortlisted" value={applications.filter(a => a.status === 'shortlisted').length} icon={Activity} colorClass="blue" />
+                <OverviewCard title="Profile Views" value="4" icon={Activity} colorClass="blue" trend="+1" />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

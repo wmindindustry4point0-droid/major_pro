@@ -8,6 +8,8 @@ const { sendOtpEmail } = require('../mailer');
 const { signToken, requireAuth } = require('../middleware/auth');
 
 // ── MongoDB-backed OTP rate limiter ───────────────────────────────────────────
+// Stores attempt counts in the Otp collection so they survive server restarts
+// and horizontal scale-out. Each attempt increments a counter on the Otp document.
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_WINDOW_MS    = 15 * 60 * 1000; // 15 minutes
 
@@ -17,17 +19,17 @@ async function checkOtpRateLimit(email, purpose) {
     const now = Date.now();
     if (rateLimitDoc) {
         if (rateLimitDoc.expiresAt < new Date()) {
+            // Window expired — delete stale doc and allow
             await Otp.deleteOne({ _id: rateLimitDoc._id });
             return true;
         }
-        // FIX: block BEFORE incrementing — previously allowed the (MAX+1)th attempt
-        if (rateLimitDoc.otp >= OTP_MAX_ATTEMPTS) return false;
+        if (rateLimitDoc.otp >= OTP_MAX_ATTEMPTS) return false; // blocked
         await Otp.updateOne({ _id: rateLimitDoc._id }, { $inc: { otp: 1 } });
     } else {
         await Otp.create({
             email: key,
             purpose: `ratelimit_${purpose}`,
-            otp: 1,
+            otp: 1, // repurpose otp field as counter string
             expiresAt: new Date(now + OTP_WINDOW_MS)
         });
     }
@@ -52,21 +54,16 @@ const saveOtp = async (email, purpose) => {
 // STEP 1 — Send OTP for registration
 router.post('/send-otp', async (req, res) => {
     const { email, name, password, role, companyName } = req.body;
-    // FIX: trim name and reject blank/whitespace-only values
-    const trimmedName = name?.trim();
-    if (!trimmedName || !email || !password || !role)
+    if (!name || !email || !password || !role)
         return res.status(400).json({ error: 'All fields are required.' });
     if (password.length < 6)
         return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-    // FIX: enforce companyName for company registrations
-    if (role === 'company' && !companyName?.trim())
-        return res.status(400).json({ error: 'Company name is required for company accounts.' });
     try {
         const existing = await User.findOne({ email: email.toLowerCase().trim() });
         if (existing)
             return res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
         const otp = await saveOtp(email.toLowerCase().trim(), 'register');
-        await sendOtpEmail({ toEmail: email, otp, purpose: 'register', name: trimmedName });
+        await sendOtpEmail({ toEmail: email, otp, purpose: 'register', name });
         res.json({ message: 'OTP sent to your email. Valid for 10 minutes.' });
     } catch (err) {
         console.error('Send OTP error:', err);
@@ -79,6 +76,7 @@ router.post('/verify-register', async (req, res) => {
     const { email, otp, name, password, role, companyName } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
 
+    // Bug #11: Rate limit OTP verification attempts
     if (!await checkOtpRateLimit(email.toLowerCase().trim(), 'register')) {
         return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
     }
@@ -101,6 +99,7 @@ router.post('/verify-register', async (req, res) => {
             email: email.toLowerCase().trim(),
             password: hashedPassword,
             role,
+            // Bug #16 fix: store undefined for candidates, not empty string
             companyName: role === 'company' ? companyName?.trim() : undefined,
             isEmailVerified: true
         });
@@ -135,6 +134,7 @@ router.post('/verify-login-otp', async (req, res) => {
     const { email, otp } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
 
+    // Bug #11: Rate limit OTP verification attempts
     if (!await checkOtpRateLimit(email.toLowerCase().trim(), 'login')) {
         return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
     }
@@ -180,23 +180,17 @@ router.post('/login', async (req, res) => {
 router.post('/register', async (req, res) => {
     const { name, email, password, role, companyName } = req.body;
     try {
-        const trimmedName = name?.trim();
-        if (!trimmedName || !email || !password || !role)
-            return res.status(400).json({ error: 'All fields are required.' });
-        if (password.length < 6)
-            return res.status(400).json({ error: 'Password must be at least 6 characters.' });
-        // FIX: enforce companyName for company registrations on the classic path too
-        if (role === 'company' && !companyName?.trim())
-            return res.status(400).json({ error: 'Company name is required for company accounts.' });
+        if (!name || !email || !password || !role) return res.status(400).json({ error: 'All fields are required.' });
+        if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
         const existing = await User.findOne({ email: email.toLowerCase().trim() });
-        if (existing)
-            return res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
+        if (existing) return res.status(409).json({ error: 'An account with this email already exists. Please log in instead.' });
         const hashedPassword = await bcrypt.hash(password, 10);
         const user = new User({
-            name: trimmedName,
+            name: name.trim(),
             email: email.toLowerCase().trim(),
             password: hashedPassword,
             role,
+            // Bug #16 fix: store undefined for candidates, not empty string
             companyName: role === 'company' ? companyName?.trim() : undefined,
             isEmailVerified: false
         });
@@ -218,7 +212,7 @@ router.patch('/me', requireAuth, async (req, res) => {
         const updates = {};
         if (name              !== undefined) updates.name              = name.trim();
         if (companyName       !== undefined) updates.companyName       = companyName.trim();
-        if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs;
+        if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs; // Bug #12 now persists
 
         const user = await User.findByIdAndUpdate(
             req.user._id,
@@ -256,12 +250,13 @@ router.post('/change-password', requireAuth, async (req, res) => {
     }
 });
 
-// ── Settings: Delete account (cascading deletion) ─────────────────────────────
+// ── Settings: Delete account (Bug #1 fix — full cascading deletion) ───────────
 router.delete('/me', requireAuth, async (req, res) => {
     try {
         const userId = req.user._id;
         const userRole = req.user.role;
 
+        // Load models here to avoid circular deps at module level
         const Application  = require('../models/Application');
         const StageHistory = require('../models/StageHistory');
         const CandidateProfile = require('../models/CandidateProfile');
@@ -270,30 +265,51 @@ router.delete('/me', requireAuth, async (req, res) => {
         const Job          = require('../models/Job');
 
         if (userRole === 'candidate') {
+            // Find all applications by this candidate
             const apps = await Application.find({ candidateId: userId }, '_id');
             const appIds = apps.map(a => a._id);
+
+            // Delete stage history for those applications
             if (appIds.length > 0) {
                 await StageHistory.deleteMany({ applicationId: { $in: appIds } });
             }
+
+            // Delete all applications
             await Application.deleteMany({ candidateId: userId });
+
+            // Delete candidate profile
             await CandidateProfile.deleteOne({ userId });
 
         } else if (userRole === 'company') {
+            // Find all jobs owned by this company
             const jobs = await Job.find({ companyId: userId }, '_id');
             const jobIds = jobs.map(j => j._id);
+
             if (jobIds.length > 0) {
+                // Find all applications for those jobs
                 const apps = await Application.find({ jobId: { $in: jobIds } }, '_id');
                 const appIds = apps.map(a => a._id);
+
+                // Delete stage history for those applications
                 if (appIds.length > 0) {
                     await StageHistory.deleteMany({ applicationId: { $in: appIds } });
                 }
+
+                // Delete all applications for this company's jobs
                 await Application.deleteMany({ jobId: { $in: jobIds } });
             }
+
+            // Delete all jobs
             await Job.deleteMany({ companyId: userId });
+
+            // Delete AI workspaces
             await AIWorkspace.deleteMany({ companyId: userId });
         }
 
+        // Delete all notifications for this user
         await Notification.deleteMany({ userId });
+
+        // Finally delete the user
         await User.findByIdAndDelete(userId);
 
         res.json({ message: 'Account and all associated data deleted successfully.' });

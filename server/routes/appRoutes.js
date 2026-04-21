@@ -328,7 +328,9 @@ router.get('/candidate/:candidateId', requireAuth, requireRole('candidate'), asy
 // ── Re-Analyze (Bug #14 fix — always use the application's own resume) ────────
 router.post('/analyze/:applicationId', requireAuth, requireRole('company'), async (req, res) => {
     try {
-        const application = await Application.findById(req.params.applicationId).populate('jobId');
+        const application = await Application.findById(req.params.applicationId)
+            .populate('jobId')
+            .populate('candidateId', 'name email');
         if (!application) return res.status(404).json({ error: 'Application not found' });
 
         // Bug #8 fix: ownership check on re-analyze too

@@ -125,7 +125,18 @@ const JobManagement = ({ user }) => {
         setAnalyzingId(appId);
         try {
             const res = await axios.post(`${API}/api/applications/analyze/${appId}`, {}, { headers: authHeader });
-            setApplicants(prev => prev.map(a => a._id === appId ? { ...a, ...res.data } : a));
+            setApplicants(prev => prev.map(a => {
+                if (a._id !== appId) return a;
+                // Preserve the populated candidateId {name, email} — the re-analyze
+                // response may return candidateId as a bare ObjectId string if not
+                // populated, which would overwrite the name and cause "Unknown".
+                const incoming = res.data.candidateId;
+                const safeCandidate =
+                    incoming && typeof incoming === 'object' && incoming.name
+                        ? incoming      // server returned populated object → use it
+                        : a.candidateId; // bare ID or missing → keep existing
+                return { ...a, ...res.data, candidateId: safeCandidate };
+            }));
         } catch { alert('AI analysis failed. Ensure the AI service is running.'); }
         finally { setAnalyzingId(null); }
     };

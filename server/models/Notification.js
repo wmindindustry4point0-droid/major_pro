@@ -11,8 +11,7 @@ const NotificationSchema = new mongoose.Schema({
             'status_analyzed',
             'status_interview',
             'status_selected',
-            'job_posted',
-            'job_deleted'          
+            'job_posted'
         ],
         required: true
     },
