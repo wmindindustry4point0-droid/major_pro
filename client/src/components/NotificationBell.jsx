@@ -1,21 +1,21 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Bell, CheckCheck, Briefcase, Star, XCircle, BrainCircuit, Megaphone } from 'lucide-react';
+import { Bell, CheckCheck, Briefcase, Star, XCircle, BrainCircuit, Megaphone, Calendar, Trophy } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// FIX: Increased from 30s to 60s to reduce wake-ups on Render free tier,
-// which spins down after 15 min of inactivity. 60s is still responsive enough
-// for notifications without hammering the server.
 const POLL_INTERVAL = 60_000;
 
 const typeConfig = {
-    application_received: { icon: Briefcase, color: 'text-indigo-400',  bg: 'bg-indigo-500/10'  },
-    status_shortlisted:   { icon: Star,      color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-    status_rejected:      { icon: XCircle,   color: 'text-rose-400',    bg: 'bg-rose-500/10'    },
-    status_analyzed:      { icon: BrainCircuit, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-    job_posted:           { icon: Megaphone, color: 'text-amber-400',   bg: 'bg-amber-500/10'   }
+    application_received: { icon: Briefcase,    color: 'text-indigo-400',  bg: 'bg-indigo-500/10'  },
+    status_shortlisted:   { icon: Star,         color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    status_rejected:      { icon: XCircle,      color: 'text-rose-400',    bg: 'bg-rose-500/10'    },
+    status_analyzed:      { icon: BrainCircuit, color: 'text-purple-400',  bg: 'bg-purple-500/10'  },
+    status_interview:     { icon: Calendar,     color: 'text-amber-400',   bg: 'bg-amber-500/10'   },  // ← added
+    status_selected:      { icon: Trophy,       color: 'text-green-400',   bg: 'bg-green-500/10'   },  // ← added
+    job_posted:           { icon: Megaphone,    color: 'text-amber-400',   bg: 'bg-amber-500/10'   },
+    job_deleted:          { icon: XCircle,      color: 'text-slate-400',   bg: 'bg-slate-500/10'   },  // ← added
 };
 
 const timeAgo = (dateStr) => {
@@ -37,8 +37,7 @@ const NotificationBell = () => {
     const [open, setOpen] = useState(false);
     const dropdownRef = useRef(null);
 
-    // FIX: All API calls now include the JWT Authorization header.
-    // Without it, requireAuth middleware returns 401 and notifications never load.
+    // Read token fresh each call so re-logins without full page reload still work
     const getAuthHeader = () => {
         const token = localStorage.getItem('token');
         return token ? { Authorization: `Bearer ${token}` } : {};
@@ -52,7 +51,6 @@ const NotificationBell = () => {
             setNotifications(res.data.notifications);
             setUnreadCount(res.data.unreadCount);
         } catch (err) {
-            // Silently ignore 401s (user may have logged out)
             if (err.response?.status !== 401) {
                 console.error('Failed to fetch notifications:', err.message);
             }
