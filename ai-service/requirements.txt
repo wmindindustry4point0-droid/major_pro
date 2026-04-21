@@ -8,4 +8,4 @@ numpy
 gunicorn
 requests
 groq
-dotenv
+dotenvassemblyai

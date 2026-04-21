@@ -645,61 +645,198 @@ Always respond in plain conversational text. No markdown headers. Keep replies u
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FEATURE: Async Video Interview — AI Transcription + Score
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEATURE: Video Response Scoring — AssemblyAI + Groq
 # POST /score_video_response
-# Body: { transcript, question, job_title, job_description }
-# Returns: { score, feedback, communication_score, content_score }
+# Body (multipart/form-data OR json):
+#   - audio_url: S3 pre-signed URL to the video/audio file  (preferred)
+#   - transcript: fallback plain text transcript
+#   - question, job_title, job_description
+# Returns: { score, content_score, communication_score, feedback,
+#            strengths, improvements, transcript, speech_metrics }
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@app.route('/score_video_response', methods=['POST'])
-def score_video_response():
-    data            = request.json
-    transcript      = data.get('transcript', '')
-    question        = data.get('question', '')
-    job_title       = data.get('job_title', 'the role')
-    job_description = data.get('job_description', '')
+ASSEMBLYAI_API_KEY = os.environ.get("ASSEMBLYAI_API_KEY", "")
+ASSEMBLYAI_BASE    = "https://api.assemblyai.com/v2"
 
-    if not transcript:
-        return jsonify({'error': 'transcript is required'}), 400
+def assemblyai_transcribe(audio_url: str) -> dict:
+    """
+    Submit audio to AssemblyAI for transcription + speech analysis.
+    Returns dict with transcript text and speech metrics.
+    Falls back gracefully if API key not set.
+    """
+    if not ASSEMBLYAI_API_KEY:
+        return {"transcript": "", "metrics": {}, "error": "no_key"}
 
-    if not GROQ_API_KEY:
-        return jsonify({'score': 50, 'content_score': 50, 'communication_score': 50, 'feedback': 'AI scoring unavailable — Groq API key not configured.'}), 200
+    headers = {"authorization": ASSEMBLYAI_API_KEY, "content-type": "application/json"}
 
-    prompt = f"""You are an expert interviewer evaluating a candidate's video interview response.
+    # Submit transcription job with all analysis features enabled
+    payload = {
+        "audio_url": audio_url,
+        "sentiment_analysis": True,
+        "auto_highlights": True,
+        "filter_profanity": False,
+        "speech_threshold": 0.2,
+    }
+    try:
+        resp = requests.post(f"{ASSEMBLYAI_BASE}/transcript", json=payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+        transcript_id = resp.json()["id"]
+    except Exception as e:
+        print(f"[AssemblyAI] Submit error: {e}")
+        return {"transcript": "", "metrics": {}, "error": str(e)}
+
+    # Poll until complete (max 120s)
+    for _ in range(60):
+        time.sleep(2)
+        try:
+            poll = requests.get(f"{ASSEMBLYAI_BASE}/transcript/{transcript_id}", headers=headers, timeout=15)
+            poll.raise_for_status()
+            result = poll.json()
+        except Exception as e:
+            print(f"[AssemblyAI] Poll error: {e}")
+            continue
+
+        status = result.get("status")
+        if status == "completed":
+            # Extract speech metrics from AssemblyAI response
+            words          = result.get("words", [])
+            total_words    = len(words)
+            audio_duration = result.get("audio_duration", 0) or 1  # seconds
+            wpm            = round((total_words / audio_duration) * 60) if audio_duration else 0
+
+            # Sentiment breakdown
+            sentiments     = result.get("sentiment_analysis_results", [])
+            pos = sum(1 for s in sentiments if s.get("sentiment") == "POSITIVE")
+            neg = sum(1 for s in sentiments if s.get("sentiment") == "NEGATIVE")
+            neu = sum(1 for s in sentiments if s.get("sentiment") == "NEUTRAL")
+            total_sents    = len(sentiments) or 1
+            sentiment_score = round((pos / total_sents) * 100)  # 0-100, higher = more positive
+
+            # Filler word count (common fillers)
+            raw_text = (result.get("text") or "").lower()
+            fillers  = ["um", "uh", "like", "you know", "basically", "literally", "right", "so"]
+            filler_count = sum(raw_text.count(f" {f} ") for f in fillers)
+
+            # Confidence: AssemblyAI provides per-word confidence 0-1
+            avg_confidence = round(
+                (sum(w.get("confidence", 0) for w in words) / max(len(words), 1)) * 100
+            )
+
+            metrics = {
+                "words_per_minute":  wpm,
+                "total_words":       total_words,
+                "audio_duration_s":  round(audio_duration),
+                "sentiment_score":   sentiment_score,  # 0-100
+                "filler_word_count": filler_count,
+                "avg_confidence":    avg_confidence,   # 0-100
+                "positive_pct":      round((pos / total_sents) * 100),
+                "negative_pct":      round((neg / total_sents) * 100),
+                "neutral_pct":       round((neu / total_sents) * 100),
+            }
+            return {"transcript": result.get("text", ""), "metrics": metrics, "error": None}
+
+        elif status == "error":
+            print(f"[AssemblyAI] Transcription error: {result.get('error')}")
+            return {"transcript": "", "metrics": {}, "error": result.get("error")}
+
+    return {"transcript": "", "metrics": {}, "error": "timeout"}
+
+
+def groq_score_response(transcript: str, question: str, job_title: str,
+                         job_description: str, speech_metrics: dict) -> dict:
+    """Score response content via Groq LLM, incorporating speech metrics."""
+    metrics_summary = ""
+    if speech_metrics:
+        metrics_summary = f"""
+Speech Analysis (from audio):
+- Words per minute: {speech_metrics.get("words_per_minute", "N/A")} (ideal: 120-160)
+- Total words: {speech_metrics.get("total_words", "N/A")}
+- Filler words detected: {speech_metrics.get("filler_word_count", "N/A")}
+- Speech confidence score: {speech_metrics.get("avg_confidence", "N/A")}%
+- Sentiment: {speech_metrics.get("positive_pct", "N/A")}% positive, {speech_metrics.get("negative_pct", "N/A")}% negative
+"""
+
+    prompt = f"""You are an expert technical interviewer evaluating a candidate's video interview response.
 
 Role: {job_title}
-Question Asked: {question}
-Candidate's Transcript: {transcript[:2000]}
+Question: {question}
+Candidate's Answer (transcript): {transcript[:2500]}
+{metrics_summary}
 
-Evaluate on these dimensions and return ONLY a JSON object:
-- "content_score": integer 0-100 (relevance, depth, accuracy of the answer)
-- "communication_score": integer 0-100 (clarity, structure, conciseness based on transcript)
-- "overall_score": integer 0-100 (weighted average)
-- "feedback": string, 2-3 sentence constructive feedback
-- "strengths": array of 1-2 short strength strings
-- "improvements": array of 1-2 short improvement strings
+Evaluate and return ONLY a valid JSON object with these exact keys:
+- "content_score": integer 0-100
+  (How well did they answer the question? Relevance, depth, accuracy, use of examples)
+- "communication_score": integer 0-100
+  (Clarity, structure, pacing — factor in filler words and WPM if provided)
+- "overall_score": integer 0-100 (weighted: 60% content, 40% communication)
+- "feedback": string, 2-3 sentences of specific, constructive feedback referencing their actual answer
+- "strengths": array of exactly 2 short specific strength strings
+- "improvements": array of exactly 2 short specific improvement strings
 
-Be fair and encouraging. Return ONLY the JSON object, no markdown."""
+Be fair, specific, and encouraging. Return ONLY the JSON, no markdown."""
 
     try:
         result = groq_post({
             "model": GROQ_MODEL,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
-            "max_tokens": 400,
+            "max_tokens": 500,
             "response_format": {"type": "json_object"},
         })
         parsed = json.loads(result["choices"][0]["message"]["content"])
-        return jsonify({
-            'score':               int(parsed.get('overall_score', 60)),
-            'content_score':       int(parsed.get('content_score', 60)),
-            'communication_score': int(parsed.get('communication_score', 60)),
-            'feedback':            str(parsed.get('feedback', '')),
-            'strengths':           parsed.get('strengths', []),
-            'improvements':        parsed.get('improvements', []),
-        })
+        return {
+            "score":               int(parsed.get("overall_score", 60)),
+            "content_score":       int(parsed.get("content_score", 60)),
+            "communication_score": int(parsed.get("communication_score", 60)),
+            "feedback":            str(parsed.get("feedback", "")),
+            "strengths":           parsed.get("strengths", []),
+            "improvements":        parsed.get("improvements", []),
+        }
     except Exception as e:
-        print(f"[score_video] Error: {e}")
-        return jsonify({'score': 50, 'content_score': 50, 'communication_score': 50, 'feedback': 'Scoring failed. Please try again.'}), 200
+        print(f"[groq_score] Error: {e}")
+        return {"score": 50, "content_score": 50, "communication_score": 50,
+                "feedback": "Scoring unavailable.", "strengths": [], "improvements": []}
+
+
+@app.route('/score_video_response', methods=['POST'])
+def score_video_response():
+    data            = request.json or {}
+    audio_url       = data.get("audio_url", "")       # S3 pre-signed URL
+    transcript_in   = data.get("transcript", "")       # fallback transcript
+    question        = data.get("question", "")
+    job_title       = data.get("job_title", "the role")
+    job_description = data.get("job_description", "")
+
+    speech_metrics  = {}
+    final_transcript = transcript_in
+
+    # Step 1: Try AssemblyAI transcription if audio_url provided
+    if audio_url and ASSEMBLYAI_API_KEY:
+        print(f"[score_video] Using AssemblyAI for audio transcription")
+        aai_result = assemblyai_transcribe(audio_url)
+        if not aai_result.get("error") and aai_result.get("transcript"):
+            final_transcript = aai_result["transcript"]
+            speech_metrics   = aai_result["metrics"]
+            print(f"[score_video] AssemblyAI done: {len(final_transcript)} chars, metrics: {speech_metrics}")
+        else:
+            print(f"[score_video] AssemblyAI failed ({aai_result.get('error')}), falling back to browser transcript")
+    else:
+        if not ASSEMBLYAI_API_KEY:
+            print("[score_video] No AssemblyAI key — using browser transcript only")
+
+    if not final_transcript.strip():
+        return jsonify({"error": "No transcript available to score."}), 400
+
+    # Step 2: Score with Groq
+    scores = groq_score_response(final_transcript, question, job_title, job_description, speech_metrics)
+
+    return jsonify({
+        **scores,
+        "transcript":     final_transcript,
+        "speech_metrics": speech_metrics,
+        "used_assemblyai": bool(speech_metrics),
+    })
 
 
 if __name__ == '__main__':

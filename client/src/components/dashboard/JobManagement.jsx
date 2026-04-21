@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { ScheduleInterviewButton } from './InterviewScheduler';
+import VideoReviewPanel from './VideoReviewPanel';
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const STAGES = {
@@ -49,6 +50,8 @@ const JobManagement = ({ user }) => {
     const [videoQuestions, setVideoQuestions] = useState(['', '', '']);
     const [videoDeadline, setVideoDeadline] = useState('');
     const [assigningVideo, setAssigningVideo] = useState(false);
+    const [videoReview,   setVideoReview]   = useState(null); // { id, candidateName }
+    const [videoIvCache,  setVideoIvCache]  = useState({}); // appId -> videoInterview
 
     const assignVideoInterview = async (appId) => {
         const qs = videoQuestions.filter(q => q.trim());
@@ -62,6 +65,15 @@ const JobManagement = ({ user }) => {
             setVideoDeadline('');
         } catch (e) { console.error(e); }
         finally { setAssigningVideo(false); }
+    };
+
+    const fetchVideoIvForApp = async (appId) => {
+        if (videoIvCache[appId]) return videoIvCache[appId];
+        try {
+            const { data } = await axios.get(`${API}/api/video-interviews/application/${appId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+            setVideoIvCache(prev => ({ ...prev, [appId]: data }));
+            return data;
+        } catch { return null; }
     };
 
     const [newJob, setNewJob] = useState({
@@ -432,6 +444,10 @@ const JobManagement = ({ user }) => {
                                                                         🎥 Video Interview
                                                                     </button>
                                                                 )}
+                                                                <button onClick={async () => { const vi = await fetchVideoIvForApp(app._id); if (vi) setVideoReview({ id: vi._id, candidateName: app.candidateId?.name }); }}
+                                                                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs font-medium transition ${isDark ? 'border-slate-700 text-purple-400 hover:bg-purple-900/30' : 'border-purple-200 text-purple-600 hover:bg-purple-50'}`}>
+                                                                    👁 View Results
+                                                                </button>
                                                                 <button onClick={() => { setNoteApp(app._id); setNoteText(app.recruiterNotes || ''); }}
                                                                     className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs ${isDark ? 'border-slate-700 hover:bg-slate-700 text-slate-400' : 'border-gray-200 hover:bg-gray-100 text-gray-500'}`}>
                                                                     <MessageSquare className="w-3.5 h-3.5" />
@@ -550,6 +566,19 @@ const JobManagement = ({ user }) => {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* Video Review Panel Modal */}
+            {videoReview && (
+                <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
+                    <div className="w-full max-w-2xl my-8">
+                        <VideoReviewPanel
+                            videoInterviewId={videoReview.id}
+                            candidateName={videoReview.candidateName}
+                            onClose={() => setVideoReview(null)}
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Video Interview Assignment Modal */}
             {videoModal && (

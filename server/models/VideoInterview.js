@@ -11,6 +11,7 @@ const VideoResponseSchema = new mongoose.Schema({
     feedback:      { type: String },
     strengths:     { type: [String], default: [] },
     improvements:  { type: [String], default: [] },
+    speechMetrics: { type: Object, default: {} },  // AssemblyAI metrics
     submittedAt:   { type: Date },
 }, { _id: false });
 
