@@ -7,6 +7,7 @@ import {
     CheckCircle2, XCircle, X, TrendingUp, AlertCircle, Trophy
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
+import { ScheduleInterviewButton } from './InterviewScheduler';
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const STAGES = {
@@ -44,6 +45,24 @@ const JobManagement = ({ user }) => {
     const [noteText,     setNoteText]     = useState('');
     const [rejectModal,  setRejectModal]  = useState(null);
     const [rejectReason, setRejectReason] = useState('');
+    const [videoModal,    setVideoModal]    = useState(null);
+    const [videoQuestions, setVideoQuestions] = useState(['', '', '']);
+    const [videoDeadline, setVideoDeadline] = useState('');
+    const [assigningVideo, setAssigningVideo] = useState(false);
+
+    const assignVideoInterview = async (appId) => {
+        const qs = videoQuestions.filter(q => q.trim());
+        if (!qs.length) return;
+        setAssigningVideo(true);
+        try {
+            const deadline = videoDeadline ? new Date(videoDeadline).toISOString() : null;
+            await axios.post(`${API}/api/video-interviews`, { applicationId: appId, questions: qs, deadline }, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+            setVideoModal(null);
+            setVideoQuestions(['', '', '']);
+            setVideoDeadline('');
+        } catch (e) { console.error(e); }
+        finally { setAssigningVideo(false); }
+    };
 
     const [newJob, setNewJob] = useState({
         title: '', description: '', mustHaveSkills: '', niceToHaveSkills: '',
@@ -404,6 +423,15 @@ const JobManagement = ({ user }) => {
                                                                         <XCircle className="w-3.5 h-3.5" />Reject
                                                                     </button>
                                                                 )}
+                                                                {app.status === 'interview' && (
+                                                                    <ScheduleInterviewButton applicationId={app._id} isDark={isDark} onScheduled={() => {}} />
+                                                                )}
+                                                                {(app.status === 'interview' || app.status === 'shortlisted') && (
+                                                                    <button onClick={() => setVideoModal(app._id)}
+                                                                        className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium">
+                                                                        🎥 Video Interview
+                                                                    </button>
+                                                                )}
                                                                 <button onClick={() => { setNoteApp(app._id); setNoteText(app.recruiterNotes || ''); }}
                                                                     className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg border text-xs ${isDark ? 'border-slate-700 hover:bg-slate-700 text-slate-400' : 'border-gray-200 hover:bg-gray-100 text-gray-500'}`}>
                                                                     <MessageSquare className="w-3.5 h-3.5" />
@@ -522,6 +550,47 @@ const JobManagement = ({ user }) => {
                     </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* Video Interview Assignment Modal */}
+            {videoModal && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+                    <div className={`w-full max-w-md rounded-2xl p-6 space-y-4 ${isDark ? 'bg-slate-900 border border-slate-700' : 'bg-white border border-slate-200'}`}>
+                        <div className="flex items-center justify-between">
+                            <h3 className={`font-bold text-lg ${isDark ? 'text-white' : 'text-slate-900'}`}>Assign Video Interview</h3>
+                            <button onClick={() => setVideoModal(null)} className={`text-sm ${isDark ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-900'}`}>✕</button>
+                        </div>
+                        <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Add up to 5 questions. Candidate records video answers at their own pace.</p>
+                        <div className="space-y-2">
+                            {videoQuestions.map((q, i) => (
+                                <div key={i} className="flex gap-2">
+                                    <span className={`text-xs font-bold mt-2.5 w-5 shrink-0 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Q{i+1}</span>
+                                    <input
+                                        value={q}
+                                        onChange={e => { const qs = [...videoQuestions]; qs[i] = e.target.value; setVideoQuestions(qs); }}
+                                        placeholder={`Question ${i+1}...`}
+                                        className={`flex-1 px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${isDark ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500' : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400'}`}
+                                    />
+                                </div>
+                            ))}
+                            {videoQuestions.length < 5 && (
+                                <button onClick={() => setVideoQuestions(q => [...q, ''])} className={`text-xs flex items-center gap-1 ${isDark ? 'text-indigo-400' : 'text-indigo-600'}`}>+ Add question</button>
+                            )}
+                        </div>
+                        <div>
+                            <label className={`text-xs font-medium block mb-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Response Deadline (optional)</label>
+                            <input type="date" value={videoDeadline} onChange={e => setVideoDeadline(e.target.value)} min={new Date().toISOString().split('T')[0]}
+                                className={`w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 ${isDark ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-900'}`} />
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => assignVideoInterview(videoModal)} disabled={assigningVideo || !videoQuestions.filter(q=>q.trim()).length}
+                                className="flex-1 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-semibold rounded-xl text-sm transition">
+                                {assigningVideo ? 'Assigning...' : '🎥 Assign Video Interview'}
+                            </button>
+                            <button onClick={() => setVideoModal(null)} className={`px-4 py-2.5 rounded-xl border text-sm transition ${isDark ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-slate-200 text-slate-500 hover:bg-slate-50'}`}>Cancel</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

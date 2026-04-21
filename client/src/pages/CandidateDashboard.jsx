@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
     LayoutDashboard, FileText, Search, Briefcase, Target,
     Settings, LogOut, UserCircle, TrendingUp, Clock,
-    Activity, ChevronRight, RefreshCw, Menu, X, BrainCircuit,
+    Activity, ChevronRight, RefreshCw, Menu, X, BrainCircuit, Calendar,
 } from "lucide-react";
 
 import ResumeProfile from "../components/dashboard/candidate/ResumeProfile";
@@ -16,6 +16,7 @@ import CandidateSettings from "../components/dashboard/candidate/Settings";
 import ThemeToggle from "../components/ThemeToggle";
 import NotificationBell from "../components/NotificationBell";
 import { useTheme } from "../context/ThemeContext";
+import CandidateInterviews from "../components/dashboard/candidate/CandidateInterviews";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 const REFRESH_INTERVAL = 30_000;
@@ -258,6 +259,7 @@ const CandidateDashboard = () => {
         { id: "browse",        label: "Browse Jobs",        icon: Search          },
         { id: "applications",  label: "My Applications",    icon: Briefcase       },
         { id: "match",         label: "Match Score (AI)",   icon: Target          },
+        { id: "interviews",    label: "My Interviews",      icon: Calendar        },
         { id: "settings",      label: "Settings",           icon: Settings        },
     ];
 
@@ -268,6 +270,7 @@ const CandidateDashboard = () => {
             case "browse":       return <BrowseJobs />;
             case "applications": return <MyApplications />;
             case "match":        return <MatchScore />;
+            case "interviews":   return <CandidateInterviews />;
             case "settings":     return <CandidateSettings />;
             default:             return null;
         }

@@ -51,17 +51,25 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/resume-sc
 // NEW: Register StageHistory before routes load
 require('./models/StageHistory');
 
-const authRoutes         = require('./routes/authRoutes');
-const jobRoutes          = require('./routes/jobRoutes');
-const appRoutes          = require('./routes/appRoutes');
-const candidateRoutes    = require('./routes/candidateRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
+const authRoutes           = require('./routes/authRoutes');
+const jobRoutes            = require('./routes/jobRoutes');
+const appRoutes            = require('./routes/appRoutes');
+const candidateRoutes      = require('./routes/candidateRoutes');
+const notificationRoutes   = require('./routes/notificationRoutes');
+const interviewRoutes      = require('./routes/interviewRoutes');
+const videoInterviewRoutes = require('./routes/videoInterviewRoutes');
 
-app.use('/api/auth',          authRoutes);
-app.use('/api/jobs',          jobRoutes);
-app.use('/api/applications',  appRoutes);
-app.use('/api/candidate',     candidateRoutes);
-app.use('/api/notifications', notificationRoutes);
+// NEW: Register new models before routes load
+require('./models/Interview');
+require('./models/VideoInterview');
+
+app.use('/api/auth',            authRoutes);
+app.use('/api/jobs',            jobRoutes);
+app.use('/api/applications',    appRoutes);
+app.use('/api/candidate',       candidateRoutes);
+app.use('/api/notifications',   notificationRoutes);
+app.use('/api/interviews',      interviewRoutes);
+app.use('/api/video-interviews',videoInterviewRoutes);
 
 app.get('/', (req, res) => res.send('API is running...'));
 

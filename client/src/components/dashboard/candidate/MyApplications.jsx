@@ -3,9 +3,13 @@ import axios from 'axios';
 import {
     Briefcase, Building, Clock, CheckCircle2, XCircle,
     Loader2, BrainCircuit, ChevronDown, TrendingUp, AlertCircle,
-    Calendar, Trophy
+    Calendar, Trophy, Video
 } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
+import InterviewPrepChatbot from './InterviewPrepChatbot';
+import VideoInterview from './VideoInterview';
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 const MyApplications = () => {
     const [applications, setApplications] = useState([]);
@@ -14,6 +18,18 @@ const MyApplications = () => {
     const user  = JSON.parse(localStorage.getItem('user'));
     const token = localStorage.getItem('token');
     const { isDark } = useTheme();
+    const [prepApp, setPrepApp]       = useState(null); // app object for chatbot
+    const [videoApp, setVideoApp]     = useState(null); // app object for video
+    const [videoIv, setVideoIv]       = useState({});   // { appId -> videoInterview }
+
+    const fetchVideoInterview = async (appId) => {
+        if (videoIv[appId]) return videoIv[appId];
+        try {
+            const { data } = await axios.get(`${API}/api/video-interviews/application/${appId}`, { headers: { Authorization: `Bearer ${token}` } });
+            setVideoIv(prev => ({ ...prev, [appId]: data }));
+            return data;
+        } catch { return null; }
+    };
 
     useEffect(() => {
         const fetchApps = async () => {
@@ -246,7 +262,32 @@ const MyApplications = () => {
                                                                     </div>
                                                                 </div>
                                                             )}
+                                                            {(app.status === 'shortlisted' || app.status === 'interview') && (
+                                                                <div className="md:col-span-2 flex flex-wrap gap-2 pt-3 border-t border-slate-700/30">
+                                                                    <button
+                                                                        onClick={() => { setPrepApp(prepApp?._id === app._id ? null : app); setVideoApp(null); }}
+                                                                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl border transition ${prepApp?._id === app._id ? 'bg-indigo-600 border-indigo-600 text-white' : isDark ? 'border-slate-700 text-indigo-400 hover:bg-indigo-900/30' : 'border-indigo-200 text-indigo-600 hover:bg-indigo-50'}`}
+                                                                    ><BrainCircuit className="w-3.5 h-3.5" /> AI Interview Prep</button>
+                                                                    <button
+                                                                        onClick={async () => { const vi = await fetchVideoInterview(app._id); setVideoApp(videoApp?._id === app._id ? null : app); setPrepApp(null); }}
+                                                                        className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-xl border transition ${videoApp?._id === app._id ? 'bg-amber-600 border-amber-600 text-white' : isDark ? 'border-slate-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-200 text-amber-600 hover:bg-amber-50'}`}
+                                                                    ><Video className="w-3.5 h-3.5" /> Video Interview</button>
+                                                                </div>
+                                                            )}
                                                         </div>
+                                                        {prepApp?._id === app._id && (
+                                                            <div className="px-6 pb-6">
+                                                                <InterviewPrepChatbot applicationId={app._id} jobTitle={app.jobId?.title} jobDescription={app.jobId?.description} candidateSkills={app.skillsMatched || []} />
+                                                            </div>
+                                                        )}
+                                                        {videoApp?._id === app._id && videoIv[app._id] && (
+                                                            <div className="px-6 pb-6">
+                                                                <VideoInterview videoInterview={videoIv[app._id]} onComplete={() => fetchVideoInterview(app._id)} />
+                                                            </div>
+                                                        )}
+                                                        {videoApp?._id === app._id && !videoIv[app._id] && (
+                                                            <div className={`px-6 pb-4 text-sm ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>No video interview assigned yet.</div>
+                                                        )}
                                                     </td>
                                                 </tr>
                                             )}

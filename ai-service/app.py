@@ -584,5 +584,123 @@ def health():
     return jsonify({'status': 'ok', 'model': 'all-MiniLM-L6-v2', 'version': '3.0', 'llm': GROQ_MODEL, 'groq_status': groq_status})
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEATURE: AI Interview Prep Chatbot
+# POST /prep_chat
+# Body: { job_title, job_description, candidate_skills, history, user_message }
+# Returns: { reply, question_type }
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/prep_chat', methods=['POST'])
+def prep_chat():
+    data              = request.json
+    job_title         = data.get('job_title', 'the role')
+    job_description   = data.get('job_description', '')
+    candidate_skills  = data.get('candidate_skills', [])
+    history           = data.get('history', [])          # [{role, content}, ...]
+    user_message      = data.get('user_message', '')
+
+    if not user_message:
+        return jsonify({'error': 'user_message is required'}), 400
+
+    if not GROQ_API_KEY:
+        return jsonify({'reply': "Groq API key not configured. Please add GROQ_API_KEY to the AI service environment.", 'question_type': 'error'}), 200
+
+    system_prompt = f"""You are an expert technical interviewer conducting a mock interview for the role: "{job_title}".
+
+Job Description Summary:
+{job_description[:1200]}
+
+Candidate's Known Skills: {', '.join(candidate_skills[:20]) if candidate_skills else 'Not provided'}
+
+Your job:
+1. Ask ONE focused interview question per turn — alternate between technical, behavioral, and situational questions.
+2. When the candidate answers, give brief, constructive feedback (2-3 sentences max), then ask the next question.
+3. Keep a natural conversation flow. Don't repeat question types back-to-back.
+4. After 6-8 exchanges, offer a short summary of strengths and areas to improve.
+5. Be encouraging but honest. This is practice, not judgment.
+6. Start by introducing yourself and asking the first question.
+
+Always respond in plain conversational text. No markdown headers. Keep replies under 150 words."""
+
+    messages = [{"role": "system", "content": system_prompt}]
+    # Append history (last 10 turns to stay within token limits)
+    for h in history[-10:]:
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": user_message})
+
+    try:
+        result = groq_post({
+            "model": GROQ_MODEL,
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 300,
+        })
+        reply = result["choices"][0]["message"]["content"].strip()
+        return jsonify({'reply': reply})
+    except Exception as e:
+        print(f"[prep_chat] Error: {e}")
+        return jsonify({'reply': "Sorry, I couldn't generate a response right now. Please try again.", 'question_type': 'error'}), 200
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FEATURE: Async Video Interview — AI Transcription + Score
+# POST /score_video_response
+# Body: { transcript, question, job_title, job_description }
+# Returns: { score, feedback, communication_score, content_score }
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route('/score_video_response', methods=['POST'])
+def score_video_response():
+    data            = request.json
+    transcript      = data.get('transcript', '')
+    question        = data.get('question', '')
+    job_title       = data.get('job_title', 'the role')
+    job_description = data.get('job_description', '')
+
+    if not transcript:
+        return jsonify({'error': 'transcript is required'}), 400
+
+    if not GROQ_API_KEY:
+        return jsonify({'score': 50, 'content_score': 50, 'communication_score': 50, 'feedback': 'AI scoring unavailable — Groq API key not configured.'}), 200
+
+    prompt = f"""You are an expert interviewer evaluating a candidate's video interview response.
+
+Role: {job_title}
+Question Asked: {question}
+Candidate's Transcript: {transcript[:2000]}
+
+Evaluate on these dimensions and return ONLY a JSON object:
+- "content_score": integer 0-100 (relevance, depth, accuracy of the answer)
+- "communication_score": integer 0-100 (clarity, structure, conciseness based on transcript)
+- "overall_score": integer 0-100 (weighted average)
+- "feedback": string, 2-3 sentence constructive feedback
+- "strengths": array of 1-2 short strength strings
+- "improvements": array of 1-2 short improvement strings
+
+Be fair and encouraging. Return ONLY the JSON object, no markdown."""
+
+    try:
+        result = groq_post({
+            "model": GROQ_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "max_tokens": 400,
+            "response_format": {"type": "json_object"},
+        })
+        parsed = json.loads(result["choices"][0]["message"]["content"])
+        return jsonify({
+            'score':               int(parsed.get('overall_score', 60)),
+            'content_score':       int(parsed.get('content_score', 60)),
+            'communication_score': int(parsed.get('communication_score', 60)),
+            'feedback':            str(parsed.get('feedback', '')),
+            'strengths':           parsed.get('strengths', []),
+            'improvements':        parsed.get('improvements', []),
+        })
+    except Exception as e:
+        print(f"[score_video] Error: {e}")
+        return jsonify({'score': 50, 'content_score': 50, 'communication_score': 50, 'feedback': 'Scoring failed. Please try again.'}), 200
+
+
 if __name__ == '__main__':
     app.run(port=5001, debug=True, use_reloader=False)
