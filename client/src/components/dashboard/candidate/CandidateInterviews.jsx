@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Calendar, Clock, Video, Phone, MapPin, CheckCircle2, RefreshCw, Loader2, AlertCircle, Link } from 'lucide-react';
+import { Calendar, Clock, Video, Phone, MapPin, CheckCircle2, RefreshCw, Loader2, AlertCircle, Link, Timer } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -9,6 +9,24 @@ const typeIcon = { video: <Video className="w-4 h-4" />, phone: <Phone className
 const typeLabel = { video: 'Video Call', phone: 'Phone Call', 'in-person': 'In Person' };
 
 const fmtDate = (d) => new Date(d).toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short' });
+
+// FIX #3: Countdown helper
+const getCountdown = (dateStr) => {
+    const now = new Date();
+    const target = new Date(dateStr);
+    const diffMs = target - now;
+    if (diffMs < 0) return null; // already passed
+
+    const diffMins  = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays  = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 60)  return { label: `In ${diffMins} minute${diffMins !== 1 ? 's' : ''}`, urgent: true };
+    if (diffHours < 24) return { label: `Today at ${target.toLocaleTimeString('en-IN', { timeStyle: 'short' })}`, urgent: true };
+    if (diffDays === 1) return { label: `Tomorrow at ${target.toLocaleTimeString('en-IN', { timeStyle: 'short' })}`, urgent: false };
+    if (diffDays <= 7)  return { label: `In ${diffDays} days`, urgent: false };
+    return null;
+};
 
 const statusBadge = {
     pending_confirmation: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
@@ -30,7 +48,7 @@ export default function CandidateInterviews() {
     const token = localStorage.getItem('token');
     const [interviews, setInterviews]   = useState([]);
     const [loading, setLoading]         = useState(true);
-    const [confirming, setConfirming]   = useState(null); // interviewId
+    const [confirming, setConfirming]   = useState(null);
     const [rescheduleId, setRescheduleId] = useState(null);
     const [rescheduleNote, setRescheduleNote] = useState('');
     const [submitting, setSubmitting]   = useState(false);
@@ -93,15 +111,13 @@ export default function CandidateInterviews() {
         <div className="max-w-3xl mx-auto space-y-6">
             {/* Toast */}
             {toast && (
-                <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 ${
-                    toast.type === 'error' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'
-                }`}>
+                <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-xl shadow-lg text-sm font-medium flex items-center gap-2 ${toast.type === 'error' ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}`}>
                     {toast.type === 'error' ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
                     {toast.msg}
                 </div>
             )}
 
-            <div className={`flex items-center justify-between`}>
+            <div className="flex items-center justify-between">
                 <div>
                     <h2 className={`text-2xl font-bold ${head}`}>Interview Schedule</h2>
                     <p className={`text-sm mt-1 ${sub}`}>Confirm or reschedule your upcoming interviews</p>
@@ -148,16 +164,29 @@ export default function CandidateInterviews() {
                                 )}
                             </div>
 
-                            {/* Confirmed slot display */}
-                            {iv.status === 'confirmed' && iv.confirmedSlot?.date && (
-                                <div className={`flex items-center gap-3 p-4 rounded-xl border ${isDark ? 'bg-emerald-900/20 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200'}`}>
-                                    <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                                    <div>
-                                        <p className={`font-semibold text-sm ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>Confirmed Slot</p>
-                                        <p className={`text-sm ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{fmtDate(iv.confirmedSlot.date)} · {iv.confirmedSlot.duration || 45} min</p>
+                            {/* FIX #3: Confirmed slot with countdown */}
+                            {iv.status === 'confirmed' && iv.confirmedSlot?.date && (() => {
+                                const countdown = getCountdown(iv.confirmedSlot.date);
+                                return (
+                                    <div className={`flex items-start gap-3 p-4 rounded-xl border ${isDark ? 'bg-emerald-900/20 border-emerald-500/30' : 'bg-emerald-50 border-emerald-200'}`}>
+                                        <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                                        <div className="flex-1">
+                                            <p className={`font-semibold text-sm ${isDark ? 'text-emerald-300' : 'text-emerald-700'}`}>Confirmed Slot</p>
+                                            <p className={`text-sm ${isDark ? 'text-emerald-400' : 'text-emerald-600'}`}>{fmtDate(iv.confirmedSlot.date)} · {iv.confirmedSlot.duration || 45} min</p>
+                                            {countdown && (
+                                                <div className={`mt-2 inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-lg ${
+                                                    countdown.urgent
+                                                        ? isDark ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-amber-50 text-amber-700 border border-amber-200'
+                                                        : isDark ? 'bg-slate-800 text-slate-300 border border-slate-700' : 'bg-white text-slate-600 border border-slate-200 shadow-sm'
+                                                }`}>
+                                                    <Timer className="w-3 h-3" />
+                                                    {countdown.label}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
-                            )}
+                                );
+                            })()}
 
                             {/* Proposed slots */}
                             {iv.status === 'pending_confirmation' && (
@@ -166,13 +195,21 @@ export default function CandidateInterviews() {
                                     <div className="space-y-2">
                                         {iv.proposedSlots.map((slot, i) => {
                                             const isConfirming = confirming === `${iv._id}-${i}`;
+                                            const countdown = getCountdown(slot.date);
                                             return (
                                                 <div key={i} className={`flex items-center justify-between p-3.5 rounded-xl border transition ${isDark ? 'border-slate-700 bg-slate-800/50 hover:border-indigo-500/50' : 'border-slate-200 bg-slate-50 hover:border-indigo-300'}`}>
                                                     <div className="flex items-center gap-3">
                                                         <Clock className={`w-4 h-4 ${isDark ? 'text-indigo-400' : 'text-indigo-500'}`} />
                                                         <div>
                                                             <p className={`text-sm font-medium ${head}`}>{fmtDate(slot.date)}</p>
-                                                            <p className={`text-xs ${sub}`}>{slot.duration || 45} minutes</p>
+                                                            <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                                                                <p className={`text-xs ${sub}`}>{slot.duration || 45} minutes</p>
+                                                                {countdown && (
+                                                                    <span className={`text-xs font-medium ${countdown.urgent ? 'text-amber-400' : isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                                                                        · {countdown.label}
+                                                                    </span>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                     <button
@@ -188,13 +225,17 @@ export default function CandidateInterviews() {
                                         })}
                                     </div>
 
-                                    {/* Reschedule */}
+                                    {/* FIX #7: Reschedule note clearly labelled optional */}
                                     {rescheduleId === iv._id ? (
                                         <div className="space-y-2">
+                                            <label className={`text-xs font-medium flex items-center gap-1.5 ${sub}`}>
+                                                Reason for reschedule
+                                                <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400'}`}>(optional)</span>
+                                            </label>
                                             <textarea
                                                 value={rescheduleNote}
                                                 onChange={e => setRescheduleNote(e.target.value)}
-                                                placeholder="Reason for reschedule (optional)..."
+                                                placeholder="e.g. I have a conflict on those days..."
                                                 rows={2}
                                                 className={`w-full px-3 py-2 rounded-lg border text-sm resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 ${inputC}`}
                                             />
@@ -211,7 +252,7 @@ export default function CandidateInterviews() {
                                         </div>
                                     ) : (
                                         <button onClick={() => setRescheduleId(iv._id)}
-                                            className={`text-sm ${isDark ? 'text-slate-500 hover:text-amber-400' : 'text-slate-400 hover:text-amber-600'} transition flex items-center gap-1.5`}>
+                                            className={`text-sm transition flex items-center gap-1.5 ${isDark ? 'text-slate-500 hover:text-amber-400' : 'text-slate-400 hover:text-amber-600'}`}>
                                             <RefreshCw className="w-3.5 h-3.5" /> None of these work? Request reschedule
                                         </button>
                                     )}

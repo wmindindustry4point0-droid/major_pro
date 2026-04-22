@@ -195,7 +195,7 @@ const MyApplications = () => {
                                 {applications.map(app => {
                                     const c    = cfg(app.status);
                                     const isEx = expanded === app._id;
-                                    const hasBreakdown = app.scoreBreakdown || app.strengths?.length > 0 || app.weaknesses?.length > 0;
+                                    const hasBreakdown = app.scoreBreakdown || app.strengths?.length > 0 || app.weaknesses?.length > 0 || app.status === 'shortlisted' || app.status === 'interview' || app.status === 'selected';
                                     return (
                                         <React.Fragment key={app._id}>
                                             <tr className={`transition-colors ${c.row} ${rowHover}`}>

@@ -3,7 +3,7 @@ import axios from 'axios';
 import {
     Play, Pause, BarChart3, MessageSquare, ChevronLeft,
     ChevronRight, Loader2, CheckCircle2, AlertCircle,
-    Mic, TrendingUp, TrendingDown, Clock, X, RefreshCw
+    Mic, TrendingUp, TrendingDown, Clock, X, Eye
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 
@@ -23,22 +23,35 @@ export default function VideoReviewPanel({ videoInterviewId, candidateName, onCl
     const token = localStorage.getItem('token');
     const headers = { Authorization: `Bearer ${token}` };
 
-    const [vi, setVi]           = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [qIdx, setQIdx]       = useState(0);
-    const [tab, setTab]         = useState('score'); // 'score' | 'transcript' | 'speech'
-    const videoRef              = useRef(null);
+    const [vi, setVi]                 = useState(null);
+    const [loading, setLoading]       = useState(true);
+    const [marking, setMarking]       = useState(false);
+    const [qIdx, setQIdx]             = useState(0);
+    const [tab, setTab]               = useState('score');
+    const videoRef                    = useRef(null);
 
-    useEffect(() => {
-        const fetch = async () => {
-            try {
-                const { data } = await axios.get(`${API}/api/video-interviews/${videoInterviewId}`, { headers });
-                setVi(data);
-            } catch (e) { console.error(e); }
-            finally { setLoading(false); }
-        };
-        fetch();
-    }, [videoInterviewId]);
+    const load = async () => {
+        try {
+            const { data } = await axios.get(`${API}/api/video-interviews/${videoInterviewId}`, { headers });
+            setVi(data);
+        } catch (e) { console.error(e); }
+        finally { setLoading(false); }
+    };
+
+    useEffect(() => { load(); }, [videoInterviewId]);
+
+    // FIX #8: Mark as reviewed action
+    const markReviewed = async () => {
+        setMarking(true);
+        try {
+            await axios.patch(`${API}/api/video-interviews/${videoInterviewId}/status`, { status: 'reviewed' }, { headers });
+            setVi(prev => ({ ...prev, status: 'reviewed' }));
+        } catch (e) {
+            console.error('Failed to mark reviewed:', e);
+        } finally {
+            setMarking(false);
+        }
+    };
 
     const card  = isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm';
     const sub   = isDark ? 'text-slate-400' : 'text-slate-500';
@@ -83,6 +96,17 @@ export default function VideoReviewPanel({ videoInterviewId, candidateName, onCl
                             <p className={`text-3xl font-bold ${scoreColor(vi.overallScore)}`}>{vi.overallScore}%</p>
                             <p className={`text-xs ${sub}`}>Overall</p>
                         </div>
+                    )}
+                    {/* FIX #8: Mark as Reviewed button — only shown when status is 'submitted' */}
+                    {vi.status === 'submitted' && (
+                        <button
+                            onClick={markReviewed}
+                            disabled={marking}
+                            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white transition"
+                        >
+                            {marking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+                            {marking ? 'Marking...' : 'Mark Reviewed'}
+                        </button>
                     )}
                     {onClose && (
                         <button onClick={onClose} className={`p-2 rounded-lg transition ${isDark ? 'text-slate-400 hover:text-white hover:bg-slate-800' : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}>
@@ -169,7 +193,7 @@ export default function VideoReviewPanel({ videoInterviewId, candidateName, onCl
 
                                 {response.feedback && (
                                     <div className={`p-4 rounded-xl border-l-4 border-indigo-500 ${isDark ? 'bg-indigo-900/20' : 'bg-indigo-50'}`}>
-                                        <p className={`text-xs font-bold uppercase tracking-wider mb-1.5 text-indigo-400`}>AI Feedback</p>
+                                        <p className="text-xs font-bold uppercase tracking-wider mb-1.5 text-indigo-400">AI Feedback</p>
                                         <p className={`text-sm leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{response.feedback}</p>
                                     </div>
                                 )}

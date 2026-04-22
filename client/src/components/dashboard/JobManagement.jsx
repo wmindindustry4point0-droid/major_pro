@@ -365,8 +365,14 @@ const JobManagement = ({ user }) => {
                         {isLoading
                             ? <div className="flex justify-center py-10 sm:py-12"><Loader2 className="w-7 h-7 text-indigo-400 animate-spin" /></div>
                             : applicants.length === 0
-                                ? <div className={`text-center py-12 sm:py-16 border border-dashed rounded-2xl text-sm ${isDark ? 'border-slate-700 text-slate-500' : 'border-gray-300 text-gray-400'}`}>
-                                    No applicants{filterStatus!=='all'?` in "${STAGES[filterStatus]?.label}"`:''} yet.
+                                ? <div className={`text-center py-16 sm:py-20 border border-dashed rounded-2xl ${isDark ? 'border-slate-700' : 'border-gray-300'}`}>
+                                    <Users className={`w-10 h-10 mx-auto mb-3 opacity-20 ${isDark ? 'text-slate-400' : 'text-gray-400'}`} />
+                                    <p className={`font-semibold text-sm ${isDark ? 'text-slate-400' : 'text-gray-500'}`}>
+                                        {filterStatus !== 'all' ? `No candidates in "${STAGES[filterStatus]?.label}" yet.` : 'No applicants yet.'}
+                                    </p>
+                                    <p className={`text-xs mt-1 ${isDark ? 'text-slate-600' : 'text-gray-400'}`}>
+                                        {filterStatus !== 'all' ? 'Try switching to "All" or a different stage.' : 'Applications will appear here once candidates apply.'}
+                                    </p>
                                   </div>
                                 : (
                                     <div className="space-y-3">
