@@ -87,11 +87,9 @@ router.post('/:id/respond', requireAuth, requireRole('candidate'), videoUpload.s
         const videoS3Key = req.file?.key || null;
         const question   = vi.questions[qIdx];
 
-        // Generate long-lived signed URL for AssemblyAI
         let audioUrl = null;
         if (videoS3Key) audioUrl = await getS3SignedUrl(videoS3Key, 7200).catch(() => null);
 
-        // Score with AssemblyAI + Groq
         let aiResult = { score: null, contentScore: null, commScore: null, feedback: null, strengths: [], improvements: [], transcript: transcript || '', speechMetrics: {} };
         try {
             const { data } = await axios.post(`${AI_URL}/score_video_response`, {
@@ -129,10 +127,19 @@ router.post('/:id/respond', requireAuth, requireRole('candidate'), videoUpload.s
 });
 
 // GET /api/video-interviews/application/:applicationId
+// FIX #7: Added ownership check — only the owning candidate or company may access this
 router.get('/application/:applicationId', requireAuth, async (req, res) => {
     try {
         const vi = await VideoInterview.findOne({ applicationId: req.params.applicationId });
         if (!vi) return res.status(404).json({ error: 'No video interview found.' });
+
+        const userId = req.user._id.toString();
+        const isCandidate = req.user.role === 'candidate' && vi.candidateId.toString() === userId;
+        const isCompany   = req.user.role === 'company'   && vi.companyId.toString()   === userId;
+
+        if (!isCandidate && !isCompany)
+            return res.status(403).json({ error: 'Access denied.' });
+
         const responses = await Promise.all(vi.responses.map(async (r) => {
             const obj = r.toObject ? r.toObject() : { ...r };
             if (obj.videoS3Key) obj.videoUrl = await getS3SignedUrl(obj.videoS3Key, 3600).catch(() => null);

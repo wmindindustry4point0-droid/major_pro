@@ -27,7 +27,10 @@ app.use(cors({
 }));
 
 app.use(express.json());
-app.use('/uploads', express.static('uploads'));
+
+// FIX #10: Removed `app.use('/uploads', express.static('uploads'))`.
+// All file uploads go to S3 — this local static route was dead code and
+// misleading (it implied files were served locally, which they are not).
 
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -48,8 +51,10 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/resume-sc
     .then(() => console.log('MongoDB connected'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// NEW: Register StageHistory before routes load
+// Register models before routes load
 require('./models/StageHistory');
+require('./models/Interview');
+require('./models/VideoInterview');
 
 const authRoutes           = require('./routes/authRoutes');
 const jobRoutes            = require('./routes/jobRoutes');
@@ -58,10 +63,6 @@ const candidateRoutes      = require('./routes/candidateRoutes');
 const notificationRoutes   = require('./routes/notificationRoutes');
 const interviewRoutes      = require('./routes/interviewRoutes');
 const videoInterviewRoutes = require('./routes/videoInterviewRoutes');
-
-// NEW: Register new models before routes load
-require('./models/Interview');
-require('./models/VideoInterview');
 
 app.use('/api/auth',            authRoutes);
 app.use('/api/jobs',            jobRoutes);

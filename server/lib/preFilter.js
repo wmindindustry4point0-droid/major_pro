@@ -1,7 +1,13 @@
 // preFilter checks whether a candidate meets hard minimum requirements for a job.
-// v2: synonym-aware matching — "JS" matches "JavaScript", "k8s" matches "Kubernetes", etc.
+// v3: synonym-aware matching — "JS" matches "JavaScript", "k8s" matches "Kubernetes", etc.
 //
-// mustHaveThreshold: fraction of must-have skills the candidate must match (default 1.0 = 100%)
+// FIX #11: mustHaveThreshold default changed from 1.0 (100%) to 0.8 (80%).
+// A threshold of 1.0 auto-rejects candidates missing even a single skill out of 10,
+// which is too strict for real-world hiring. 0.8 allows up to 20% skill gap.
+
+// How much experience slack to allow — candidate needs at least this fraction of minExp.
+// e.g. 0.7 means a 3-year minimum will pass a 2.1-year candidate.
+const EXPERIENCE_SLACK = 0.7;
 
 // Canonical synonym map — add more pairs as needed
 const SYNONYMS = {
@@ -37,7 +43,7 @@ function normalize(skill) {
   return SYNONYMS[s] || s;
 }
 
-function preFilter(profile, job, { mustHaveThreshold = 1.0 } = {}) {
+function preFilter(profile, job, { mustHaveThreshold = 0.8 } = {}) {
   const mustHave = job.mustHaveSkills || [];
   const minExp   = job.minExperience  || 0;
 
@@ -59,7 +65,8 @@ function preFilter(profile, job, { mustHaveThreshold = 1.0 } = {}) {
   }
 
   const candidateExp = profile.totalExperienceYears || 0;
-  if (minExp > 0 && candidateExp < minExp * 0.7) {
+  // EXPERIENCE_SLACK: candidate needs at least (minExp * EXPERIENCE_SLACK) years
+  if (minExp > 0 && candidateExp < minExp * EXPERIENCE_SLACK) {
     return {
       pass: false,
       reason: `Insufficient experience: ${candidateExp.toFixed(1)} years (minimum ${minExp} years required)`

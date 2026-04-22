@@ -6,6 +6,8 @@ import {
     BarChart3, LogOut, ChevronRight, Menu, X, Calendar,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+// FIX #20: Use shared safe auth utilities
+import { getUser, clearAuth } from '../utils/auth';
 
 import Overview from '../components/dashboard/Overview';
 import JobManagement from '../components/dashboard/JobManagement';
@@ -23,12 +25,11 @@ const CompanyDashboard = () => {
     const navigate = useNavigate();
     const { isDark } = useTheme();
 
-    let user = null;
-    try { user = JSON.parse(localStorage.getItem('user')); } catch (e) {}
+    // FIX #20: Use safe getUser() helper instead of inline try/catch
+    const user = getUser();
 
     const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+        clearAuth();
         navigate('/');
     };
 

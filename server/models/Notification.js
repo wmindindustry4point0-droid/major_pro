@@ -12,6 +12,7 @@ const NotificationSchema = new mongoose.Schema({
             'status_interview',
             'status_selected',
             'job_posted',
+            'job_deleted',          // FIX #1: was missing — jobRoutes.js fires this on job deletion
             'interview_scheduled',
             'video_interview_assigned'
         ],
@@ -23,6 +24,9 @@ const NotificationSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+// TTL index: auto-delete notifications older than 30 days
 NotificationSchema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
+// Index for fast per-user lookups
+NotificationSchema.index({ userId: 1, createdAt: -1 });
 
 module.exports = mongoose.model('Notification', NotificationSchema);

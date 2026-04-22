@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
@@ -17,6 +17,8 @@ import ThemeToggle from "../components/ThemeToggle";
 import NotificationBell from "../components/NotificationBell";
 import { useTheme } from "../context/ThemeContext";
 import CandidateInterviews from "../components/dashboard/candidate/CandidateInterviews";
+// FIX #20: Use shared safe auth utilities instead of inline try/catch
+import { getUser, getToken, clearAuth } from "../utils/auth";
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 const REFRESH_INTERVAL = 30_000;
@@ -46,7 +48,6 @@ const timeAgo = (dateStr) => {
     return new Date(dateStr).toLocaleDateString();
 };
 
-// ── Sidebar nav item ──────────────────────────────────────────────────────────
 const SidebarItem = ({ icon: Icon, label, isActive, onClick, isDark }) => (
     <button
         onClick={onClick}
@@ -63,7 +64,6 @@ const SidebarItem = ({ icon: Icon, label, isActive, onClick, isDark }) => (
     </button>
 );
 
-// ── Overview stat card ────────────────────────────────────────────────────────
 const OverviewCard = ({ title, value, icon: Icon, trend, colorClass, isDark }) => (
     <div className={`border p-5 rounded-2xl relative overflow-hidden group transition-all ${
         isDark ? "bg-slate-900 border-slate-800 hover:border-slate-700" : "bg-white border-slate-200 hover:border-slate-300 shadow-sm"
@@ -84,7 +84,6 @@ const OverviewCard = ({ title, value, icon: Icon, trend, colorClass, isDark }) =
     </div>
 );
 
-// ── Overview page ─────────────────────────────────────────────────────────────
 const Overview = ({ user, profile, applications, isLoading, isRefreshing, lastRefreshed, onRefresh, onNavigate, isDark }) => {
     const profileCompletion = profile ? (profile.extractedSkills?.length > 0 ? "100%" : "60%") : "0%";
     const avgMatch = applications.length
@@ -107,13 +106,12 @@ const Overview = ({ user, profile, applications, isLoading, isRefreshing, lastRe
         <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-6 sm:mb-10">
                 <OverviewCard title="Jobs Applied"       value={applications.length} icon={Briefcase} colorClass="indigo"  isDark={isDark} />
-                <OverviewCard title="Profile Completion" value={profileCompletion}   icon={FileText}  colorClass="purple"                       isDark={isDark} />
-                <OverviewCard title="Avg. Match Score"   value={avgMatch}            icon={Target}    colorClass="emerald"                      isDark={isDark} />
-                <OverviewCard title="Shortlisted"        value={applications.filter(a => a.status === 'shortlisted').length} icon={Activity}  colorClass="blue"   isDark={isDark} />
+                <OverviewCard title="Profile Completion" value={profileCompletion}   icon={FileText}  colorClass="purple"  isDark={isDark} />
+                <OverviewCard title="Avg. Match Score"   value={avgMatch}            icon={Target}    colorClass="emerald" isDark={isDark} />
+                <OverviewCard title="Shortlisted"        value={applications.filter(a => a.status === 'shortlisted').length} icon={Activity} colorClass="blue" isDark={isDark} />
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 sm:gap-8">
-                {/* Recent Applications */}
                 <div className={`lg:col-span-2 border rounded-2xl p-4 sm:p-6 ${cardBg}`}>
                     <div className="flex items-center justify-between mb-4 sm:mb-6">
                         <h3 className={`text-lg sm:text-xl font-bold ${headingC}`}>Recent Applications</h3>
@@ -150,10 +148,10 @@ const Overview = ({ user, profile, applications, isLoading, isRefreshing, lastRe
                                     </div>
                                     <div className="flex items-center gap-2">
                                         <span className="text-xs bg-indigo-500/20 text-indigo-400 px-2 sm:px-3 py-1 rounded-full whitespace-nowrap">
-                                            {app.matchScore}% Match
+                                            {app.matchScore != null ? `${app.matchScore}% Match` : 'Analyzing…'}
                                         </span>
-                                        <span className={`text-xs px-2 sm:px-3 py-1 rounded-full whitespace-nowrap ${statusStyles[app.status]}`}>
-                                            {statusLabel[app.status]}
+                                        <span className={`text-xs px-2 sm:px-3 py-1 rounded-full whitespace-nowrap ${statusStyles[app.status] || statusStyles.applied}`}>
+                                            {statusLabel[app.status] || app.status}
                                         </span>
                                     </div>
                                 </div>
@@ -162,7 +160,6 @@ const Overview = ({ user, profile, applications, isLoading, isRefreshing, lastRe
                     )}
                 </div>
 
-                {/* AI Insights */}
                 <div className={`border rounded-2xl p-4 sm:p-6 ${
                     isDark ? "bg-gradient-to-br from-indigo-900/40 to-slate-900 border-indigo-500/20" : "bg-gradient-to-br from-indigo-50 to-white border-indigo-200"
                 }`}>
@@ -200,13 +197,22 @@ const Overview = ({ user, profile, applications, isLoading, isRefreshing, lastRe
     );
 };
 
-// ── Main Dashboard ────────────────────────────────────────────────────────────
+// ── Main Dashboard ─────────────────────────────────────────────────────────────
 const CandidateDashboard = () => {
     const [activeView, setActiveView]   = useState("overview");
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const navigate = useNavigate();
     const { isDark } = useTheme();
-    const user = JSON.parse(localStorage.getItem("user"));
+
+    // FIX #4: Use safe getUser() so crashes don't occur when localStorage is cleared
+    const user = getUser();
+
+    // FIX #4: Redirect immediately if no valid user session
+    useEffect(() => {
+        if (!user || !getToken()) {
+            navigate('/');
+        }
+    }, []);
 
     const [profile,      setProfile]      = useState(null);
     const [applications, setApplications] = useState([]);
@@ -214,16 +220,27 @@ const CandidateDashboard = () => {
     const [lastRefreshed,setLastRefreshed]= useState(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
 
+    // FIX #14: Use a ref to prevent setState after unmount
+    const mountedRef = useRef(true);
+    useEffect(() => {
+        mountedRef.current = true;
+        return () => { mountedRef.current = false; };
+    }, []);
+
+    // FIX #5: Include user._id in dependency array and use mountedRef
     const fetchDashboardData = useCallback(async (silent = false) => {
+        if (!user?._id) return;
         if (!silent) setIsLoading(true);
         else setIsRefreshing(true);
         try {
-            const token = localStorage.getItem('token');
+            const token = getToken();
             const authHeader = { Authorization: `Bearer ${token}` };
             const [profileRes, appRes] = await Promise.all([
                 axios.get(`${API}/api/candidate/profile/${user._id}`, { headers: authHeader }).catch(() => ({ data: null })),
                 axios.get(`${API}/api/applications/candidate/${user._id}`, { headers: authHeader }),
             ]);
+            // FIX #14: Only update state if still mounted
+            if (!mountedRef.current) return;
             setProfile(profileRes.data);
             const sorted = [...appRes.data].sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt));
             setApplications(sorted);
@@ -231,20 +248,24 @@ const CandidateDashboard = () => {
         } catch (error) {
             console.error("Dashboard Error:", error);
         } finally {
-            setIsLoading(false);
-            setIsRefreshing(false);
+            if (mountedRef.current) {
+                setIsLoading(false);
+                setIsRefreshing(false);
+            }
         }
-    }, [user._id]);
+    // FIX #5: Correct deps — user._id is stable but included for correctness
+    }, [user?._id]);
 
-    useEffect(() => { fetchDashboardData(false); }, []);
+    useEffect(() => { fetchDashboardData(false); }, [fetchDashboardData]);
+
+    // FIX #5: Include fetchDashboardData in interval effect dependency
     useEffect(() => {
         const interval = setInterval(() => fetchDashboardData(true), REFRESH_INTERVAL);
         return () => clearInterval(interval);
-    }, []);
+    }, [fetchDashboardData]);
 
     const handleLogout = () => {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
+        clearAuth();
         navigate("/");
     };
 
@@ -276,8 +297,7 @@ const CandidateDashboard = () => {
         }
     };
 
-    // Theme tokens
-    const mainBg     = isDark ? "bg-slate-950 text-slate-100"       : "bg-slate-50 text-slate-900";
+    const mainBg     = isDark ? "bg-slate-950 text-slate-100"        : "bg-slate-50 text-slate-900";
     const sidebarBg  = isDark ? "bg-slate-900/50 border-slate-800/50" : "bg-white border-slate-200";
     const headerBg   = isDark ? "bg-slate-900/30 border-slate-800/50" : "bg-white/80 border-slate-200";
     const dividerCol = isDark ? "border-slate-800"                    : "border-slate-200";
@@ -285,7 +305,6 @@ const CandidateDashboard = () => {
     return (
         <div className={`min-h-screen flex font-sans selection:bg-indigo-500/30 ${mainBg}`}>
 
-            {/* Ambient glow — dark only */}
             {isDark && (
                 <div className="fixed inset-0 overflow-hidden pointer-events-none">
                     <div className="absolute -top-1/2 -left-1/2 w-full h-full bg-gradient-to-br from-indigo-500/10 to-transparent rounded-full blur-3xl mix-blend-screen transform rotate-12" />
@@ -293,7 +312,6 @@ const CandidateDashboard = () => {
                 </div>
             )}
 
-            {/* Mobile sidebar overlay */}
             {sidebarOpen && (
                 <div
                     className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
@@ -301,7 +319,6 @@ const CandidateDashboard = () => {
                 />
             )}
 
-            {/* ── Sidebar ── */}
             <aside className={`
                 fixed lg:relative inset-y-0 left-0 z-50 lg:z-10
                 w-72 flex flex-col pt-6 pb-4 px-4 h-screen
@@ -309,13 +326,11 @@ const CandidateDashboard = () => {
                 ${sidebarBg}
                 ${sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}
             `}>
-                {/* Logo row */}
                 <div className={`flex items-center gap-2 px-2 mb-6 pb-4 border-b ${dividerCol}`}>
                     <BrainCircuit className="w-7 h-7 text-indigo-400" />
                     <span className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-400 to-purple-400">
                         HireMind AI
                     </span>
-                    {/* Close button — mobile only */}
                     <button
                         onClick={() => setSidebarOpen(false)}
                         className={`ml-auto lg:hidden p-1.5 rounded-lg transition ${isDark ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-slate-400 hover:text-slate-900 hover:bg-slate-100"}`}
@@ -324,7 +339,6 @@ const CandidateDashboard = () => {
                     </button>
                 </div>
 
-                {/* User avatar */}
                 <div className="flex flex-col items-center mb-6">
                     <div className="w-14 h-14 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center mb-3 shadow-[0_0_30px_rgba(99,102,241,0.3)]">
                         <UserCircle className="w-7 h-7 text-white" />
@@ -335,7 +349,6 @@ const CandidateDashboard = () => {
                     <p className="text-xs text-indigo-400 font-semibold mt-1 tracking-wider uppercase">Future Hire</p>
                 </div>
 
-                {/* Nav */}
                 <nav className="flex-1 space-y-1 overflow-y-auto">
                     {navItems.map((item) => (
                         <SidebarItem
@@ -349,7 +362,6 @@ const CandidateDashboard = () => {
                     ))}
                 </nav>
 
-                {/* Bottom — theme toggle + logout */}
                 <div className={`mt-4 pt-4 border-t space-y-1 ${dividerCol}`}>
                     <div className="px-2 mb-1">
                         <ThemeToggle className="w-full justify-center" />
@@ -366,14 +378,11 @@ const CandidateDashboard = () => {
                 </div>
             </aside>
 
-            {/* ── Main ── */}
             <main className="flex-1 flex flex-col h-screen overflow-hidden z-10 relative min-w-0">
 
-                {/* Header */}
                 <header className={`h-14 sm:h-20 border-b backdrop-blur-md flex items-center justify-between px-4 sm:px-8 shrink-0 z-20 ${headerBg}`}>
 
                     <div className="flex items-center gap-3">
-                        {/* Hamburger — mobile only */}
                         <button
                             onClick={() => setSidebarOpen(true)}
                             className={`lg:hidden p-2 rounded-lg transition-colors ${
@@ -389,7 +398,6 @@ const CandidateDashboard = () => {
                     </div>
 
                     <div className="flex items-center gap-2 sm:gap-4">
-                        {/* Logout — mobile header only */}
                         <button
                             onClick={handleLogout}
                             title="Sign out"
@@ -400,10 +408,8 @@ const CandidateDashboard = () => {
                             <LogOut className="w-4 h-4" />
                         </button>
 
-                        {/* Notifications */}
                         <NotificationBell />
 
-                        {/* User pill */}
                         <div className={`flex items-center gap-2 sm:gap-3 pl-2 sm:pl-4 border-l ${dividerCol}`}>
                             <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-full flex items-center justify-center border ${
                                 isDark ? "bg-slate-800 border-slate-700" : "bg-slate-100 border-slate-200"
@@ -420,7 +426,6 @@ const CandidateDashboard = () => {
                     </div>
                 </header>
 
-                {/* Scrollable content */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-8 custom-scrollbar">
                     <AnimatePresence mode="wait">
                         <motion.div

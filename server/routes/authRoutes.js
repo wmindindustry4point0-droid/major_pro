@@ -8,8 +8,8 @@ const { sendOtpEmail } = require('../mailer');
 const { signToken, requireAuth } = require('../middleware/auth');
 
 // ── MongoDB-backed OTP rate limiter ───────────────────────────────────────────
-// Stores attempt counts in the Otp collection so they survive server restarts
-// and horizontal scale-out. Each attempt increments a counter on the Otp document.
+// FIX #8: Uses dedicated `attempts` Number field instead of abusing the `otp`
+// String field as a counter. $inc on a String field silently corrupts data.
 const OTP_MAX_ATTEMPTS = 5;
 const OTP_WINDOW_MS    = 15 * 60 * 1000; // 15 minutes
 
@@ -23,13 +23,15 @@ async function checkOtpRateLimit(email, purpose) {
             await Otp.deleteOne({ _id: rateLimitDoc._id });
             return true;
         }
-        if (rateLimitDoc.otp >= OTP_MAX_ATTEMPTS) return false; // blocked
-        await Otp.updateOne({ _id: rateLimitDoc._id }, { $inc: { otp: 1 } });
+        if (rateLimitDoc.attempts >= OTP_MAX_ATTEMPTS) return false; // blocked
+        // FIX: increment the dedicated `attempts` Number field, not `otp` String
+        await Otp.updateOne({ _id: rateLimitDoc._id }, { $inc: { attempts: 1 } });
     } else {
         await Otp.create({
             email: key,
             purpose: `ratelimit_${purpose}`,
-            otp: 1, // repurpose otp field as counter string
+            otp: null,       // not an OTP doc
+            attempts: 1,     // FIX: use the correct field
             expiresAt: new Date(now + OTP_WINDOW_MS)
         });
     }
@@ -76,7 +78,6 @@ router.post('/verify-register', async (req, res) => {
     const { email, otp, name, password, role, companyName } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
 
-    // Bug #11: Rate limit OTP verification attempts
     if (!await checkOtpRateLimit(email.toLowerCase().trim(), 'register')) {
         return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
     }
@@ -99,7 +100,6 @@ router.post('/verify-register', async (req, res) => {
             email: email.toLowerCase().trim(),
             password: hashedPassword,
             role,
-            // Bug #16 fix: store undefined for candidates, not empty string
             companyName: role === 'company' ? companyName?.trim() : undefined,
             isEmailVerified: true
         });
@@ -134,7 +134,6 @@ router.post('/verify-login-otp', async (req, res) => {
     const { email, otp } = req.body;
     if (!email || !otp) return res.status(400).json({ error: 'Email and OTP are required.' });
 
-    // Bug #11: Rate limit OTP verification attempts
     if (!await checkOtpRateLimit(email.toLowerCase().trim(), 'login')) {
         return res.status(429).json({ error: 'Too many attempts. Please request a new OTP.' });
     }
@@ -190,7 +189,6 @@ router.post('/register', async (req, res) => {
             email: email.toLowerCase().trim(),
             password: hashedPassword,
             role,
-            // Bug #16 fix: store undefined for candidates, not empty string
             companyName: role === 'company' ? companyName?.trim() : undefined,
             isEmailVerified: false
         });
@@ -212,7 +210,7 @@ router.patch('/me', requireAuth, async (req, res) => {
         const updates = {};
         if (name              !== undefined) updates.name              = name.trim();
         if (companyName       !== undefined) updates.companyName       = companyName.trim();
-        if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs; // Bug #12 now persists
+        if (notificationPrefs !== undefined) updates.notificationPrefs = notificationPrefs;
 
         const user = await User.findByIdAndUpdate(
             req.user._id,
@@ -250,66 +248,58 @@ router.post('/change-password', requireAuth, async (req, res) => {
     }
 });
 
-// ── Settings: Delete account (Bug #1 fix — full cascading deletion) ───────────
+// ── Settings: Delete account (cascading deletion) ─────────────────────────────
 router.delete('/me', requireAuth, async (req, res) => {
     try {
-        const userId = req.user._id;
+        const userId   = req.user._id;
         const userRole = req.user.role;
 
-        // Load models here to avoid circular deps at module level
-        const Application  = require('../models/Application');
-        const StageHistory = require('../models/StageHistory');
+        const Application      = require('../models/Application');
+        const StageHistory     = require('../models/StageHistory');
         const CandidateProfile = require('../models/CandidateProfile');
-        const Notification = require('../models/Notification');
-        const AIWorkspace  = require('../models/AIWorkspace');
-        const Job          = require('../models/Job');
+        const Notification     = require('../models/Notification');
+        const AIWorkspace      = require('../models/AIWorkspace');
+        const Job              = require('../models/Job');
+        const Interview        = require('../models/Interview');
+        const VideoInterview   = require('../models/VideoInterview');
 
         if (userRole === 'candidate') {
-            // Find all applications by this candidate
-            const apps = await Application.find({ candidateId: userId }, '_id');
+            const apps   = await Application.find({ candidateId: userId }, '_id');
             const appIds = apps.map(a => a._id);
 
-            // Delete stage history for those applications
             if (appIds.length > 0) {
                 await StageHistory.deleteMany({ applicationId: { $in: appIds } });
+                // FIX: also clean up interview and video-interview records tied to this candidate
+                await Interview.deleteMany({ candidateId: userId });
+                await VideoInterview.deleteMany({ candidateId: userId });
             }
 
-            // Delete all applications
             await Application.deleteMany({ candidateId: userId });
-
-            // Delete candidate profile
             await CandidateProfile.deleteOne({ userId });
 
         } else if (userRole === 'company') {
-            // Find all jobs owned by this company
-            const jobs = await Job.find({ companyId: userId }, '_id');
+            const jobs   = await Job.find({ companyId: userId }, '_id');
             const jobIds = jobs.map(j => j._id);
 
             if (jobIds.length > 0) {
-                // Find all applications for those jobs
-                const apps = await Application.find({ jobId: { $in: jobIds } }, '_id');
+                const apps   = await Application.find({ jobId: { $in: jobIds } }, '_id');
                 const appIds = apps.map(a => a._id);
 
-                // Delete stage history for those applications
                 if (appIds.length > 0) {
                     await StageHistory.deleteMany({ applicationId: { $in: appIds } });
                 }
 
-                // Delete all applications for this company's jobs
                 await Application.deleteMany({ jobId: { $in: jobIds } });
+                // FIX: clean up all interviews for this company's jobs
+                await Interview.deleteMany({ companyId: userId });
+                await VideoInterview.deleteMany({ companyId: userId });
             }
 
-            // Delete all jobs
             await Job.deleteMany({ companyId: userId });
-
-            // Delete AI workspaces
             await AIWorkspace.deleteMany({ companyId: userId });
         }
 
-        // Delete all notifications for this user
         await Notification.deleteMany({ userId });
-
-        // Finally delete the user
         await User.findByIdAndDelete(userId);
 
         res.json({ message: 'Account and all associated data deleted successfully.' });

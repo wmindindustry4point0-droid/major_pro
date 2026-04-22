@@ -11,6 +11,8 @@ const BrowseJobs = () => {
     const [profile, setProfile] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [applyingTo, setApplyingTo] = useState(null);
+    // FIX #6: Track per-job apply errors so user gets feedback instead of silent failure
+    const [applyError, setApplyError] = useState('');
 
     const user = JSON.parse(localStorage.getItem('user'));
     const token = localStorage.getItem('token');
@@ -55,18 +57,25 @@ const BrowseJobs = () => {
             return;
         }
 
+        setApplyError('');
         setApplyingTo(jobId);
 
         try {
             // Fetch resume through our backend proxy to avoid S3 CORS issues,
             // then re-upload as part of the application so the server has a
             // dedicated copy tied to this application.
+            // FIX #6: Added explicit error handling with user-visible message
             const proxyResponse = await fetch(`${API}/api/candidate/resume-proxy/${user._id}`, {
                 headers: { Authorization: `Bearer ${token}` }
             });
 
             if (!proxyResponse.ok) {
-                throw new Error('Failed to fetch resume from server. Please try again.');
+                const errText = await proxyResponse.text().catch(() => '');
+                throw new Error(
+                    proxyResponse.status === 404
+                        ? "Resume not found. Please re-upload your resume in the Resume Profile tab."
+                        : `Failed to fetch resume (${proxyResponse.status}). Please try again.`
+                );
             }
 
             const resumeBlob = await proxyResponse.blob();

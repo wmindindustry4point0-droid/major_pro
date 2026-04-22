@@ -128,13 +128,15 @@ const AuthModal = ({ isOpen, onClose, initialView = 'role' }) => {
         setIsLoading(true);
         setError('');
         try {
-            await axios.post(`${API}/api/auth/send-otp`, {
+            // FIX #15: Only send companyName for company role — candidates should send undefined
+            const payload = {
                 name: formData.name,
                 email: formData.email,
                 password: formData.password,
                 role: selectedRole,
-                companyName: formData.companyName
-            });
+            };
+            if (selectedRole === 'company') payload.companyName = formData.companyName;
+            await axios.post(`${API}/api/auth/send-otp`, payload);
             setSuccess('OTP sent! Check your inbox.');
             setView('otp-register');
         } catch (err) {

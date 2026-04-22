@@ -29,8 +29,7 @@ function fmtDate(d) {
     return new Date(d).toLocaleString('en-IN', { dateStyle: 'full', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
 }
 
-// ── Company: Create/Update interview slots ─────────────────────────────────────
-// POST /api/interviews   body: { applicationId, proposedSlots, meetLink, interviewType, notes }
+// ── Company: Create/Update interview slots ────────────────────────────────────
 router.post('/', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const { applicationId, proposedSlots, meetLink, interviewType, notes } = req.body;
@@ -63,7 +62,6 @@ router.post('/', requireAuth, requireRole('company'), async (req, res) => {
             });
         }
 
-        // Notify candidate in-app
         await Notification.create({
             userId:  app.candidateId._id,
             type:    'status_interview',
@@ -71,7 +69,6 @@ router.post('/', requireAuth, requireRole('company'), async (req, res) => {
             message: `${app.jobId.companyId.companyName || app.jobId.companyId.name} has proposed interview slots for "${app.jobId.title}". Please confirm a slot.`,
         });
 
-        // Email candidate
         const slotList = proposedSlots.map((s, i) => `<li style="margin:6px 0;color:#a5b4fc">Option ${i+1}: <strong>${fmtDate(s.date)}</strong> (${s.duration || 45} min)</li>`).join('');
         sendInterviewEmail({
             toEmail: app.candidateId.email, toName: app.candidateId.name,
@@ -98,7 +95,6 @@ router.post('/', requireAuth, requireRole('company'), async (req, res) => {
 });
 
 // ── Candidate: Confirm a slot ─────────────────────────────────────────────────
-// PATCH /api/interviews/:id/confirm   body: { slotIndex }
 router.patch('/:id/confirm', requireAuth, requireRole('candidate'), async (req, res) => {
     try {
         const { slotIndex } = req.body;
@@ -117,7 +113,6 @@ router.patch('/:id/confirm', requireAuth, requireRole('candidate'), async (req, 
         interview.status = 'confirmed';
         await interview.save();
 
-        // Notify company
         await Notification.create({
             userId:  interview.companyId._id,
             type:    'status_interview',
@@ -125,7 +120,6 @@ router.patch('/:id/confirm', requireAuth, requireRole('candidate'), async (req, 
             message: `${interview.candidateId.name} confirmed an interview slot for "${interview.jobId.title}" on ${fmtDate(slot.date)}.`,
         });
 
-        // Email company
         sendInterviewEmail({
             toEmail: interview.companyId.email,
             toName:  interview.companyId.companyName || interview.companyId.name,
@@ -149,7 +143,6 @@ router.patch('/:id/confirm', requireAuth, requireRole('candidate'), async (req, 
 });
 
 // ── Candidate: Request reschedule ─────────────────────────────────────────────
-// PATCH /api/interviews/:id/reschedule   body: { rescheduleNote }
 router.patch('/:id/reschedule', requireAuth, requireRole('candidate'), async (req, res) => {
     try {
         const { rescheduleNote } = req.body;
@@ -178,17 +171,25 @@ router.patch('/:id/reschedule', requireAuth, requireRole('candidate'), async (re
 });
 
 // ── Get interview by applicationId ────────────────────────────────────────────
-// GET /api/interviews/application/:applicationId
+// FIX #6: Added ownership check — only the candidate who owns the application
+// or the company who owns the job may fetch the interview record.
 router.get('/application/:applicationId', requireAuth, async (req, res) => {
     try {
         const interview = await Interview.findOne({ applicationId: req.params.applicationId });
         if (!interview) return res.status(404).json({ error: 'No interview scheduled.' });
+
+        const userId = req.user._id.toString();
+        const isCandidate = req.user.role === 'candidate' && interview.candidateId.toString() === userId;
+        const isCompany   = req.user.role === 'company'   && interview.companyId.toString()   === userId;
+
+        if (!isCandidate && !isCompany)
+            return res.status(403).json({ error: 'Access denied.' });
+
         res.json(interview);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── Company: get all interviews for their jobs ─────────────────────────────────
-// GET /api/interviews/company/all
 router.get('/company/all', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const interviews = await Interview.find({ companyId: req.user._id })
@@ -200,7 +201,6 @@ router.get('/company/all', requireAuth, requireRole('company'), async (req, res)
 });
 
 // ── Candidate: get all their interviews ───────────────────────────────────────
-// GET /api/interviews/candidate/all
 router.get('/candidate/all', requireAuth, requireRole('candidate'), async (req, res) => {
     try {
         const interviews = await Interview.find({ candidateId: req.user._id })
