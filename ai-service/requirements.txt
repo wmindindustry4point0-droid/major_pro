@@ -8,4 +8,5 @@ numpy
 gunicorn
 requests
 groq
-dotenvassemblyai
+python-dotenv
+assemblyai
