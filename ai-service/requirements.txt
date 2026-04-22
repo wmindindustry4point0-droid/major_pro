@@ -7,6 +7,5 @@ scikit-learn
 numpy
 gunicorn
 requests
-groq
 python-dotenv
 assemblyai

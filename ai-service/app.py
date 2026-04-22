@@ -8,7 +8,36 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 app = Flask(__name__)
-CORS(app)
+
+# FIX #1 — SECURITY: Restrict CORS to known origins only.
+# CORS(app) with no args allows ANY origin, meaning any website on the internet
+# can POST to /analyze_batch and burn your Groq/AssemblyAI quota.
+# Set AI_SERVICE_ALLOWED_ORIGINS in your env (comma-separated) or it defaults
+# to your server's URL. Wildcard "*" is intentionally NOT a default.
+_raw_origins = os.environ.get("AI_SERVICE_ALLOWED_ORIGINS", "")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else None
+
+if _allowed_origins:
+    CORS(app, origins=_allowed_origins)
+else:
+    # Fall back to open CORS only when no origins are configured (dev mode).
+    # In production you MUST set AI_SERVICE_ALLOWED_ORIGINS.
+    print("[WARN] AI_SERVICE_ALLOWED_ORIGINS not set — CORS is open to all origins. Set this in production!")
+    CORS(app)
+
+# FIX #2 — SECURITY: Internal shared secret so only your own server can call
+# the AI service. Set AI_INTERNAL_SECRET in both the server env and ai-service env.
+# Requests without the correct header are rejected with 401.
+AI_INTERNAL_SECRET = os.environ.get("AI_INTERNAL_SECRET", "")
+
+def _require_internal_secret():
+    """Return an error response if the caller is not authorized, else None."""
+    if not AI_INTERNAL_SECRET:
+        return None  # Secret not configured — skip check (dev/local mode)
+    incoming = request.headers.get("X-Internal-Secret", "")
+    if incoming != AI_INTERNAL_SECRET:
+        return jsonify({"error": "Unauthorized"}), 401
+    return None
 
 
 import nltk
@@ -406,6 +435,10 @@ def build_insights(candidate_skills, must_have, must_matched, must_missing, nice
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
+    # FIX #2: Protect with internal secret
+    err = _require_internal_secret()
+    if err: return err
+
     data = request.json
     resume_path      = data.get('resume_path', '')
     jd_text          = data.get('job_description', '')
@@ -470,6 +503,9 @@ def analyze():
 
 @app.route('/embed_jd', methods=['POST'])
 def embed_jd():
+    err = _require_internal_secret()
+    if err: return err
+
     data = request.json
     jd_text = data.get('job_description', '')
     if not jd_text: return jsonify({'error': 'Missing job_description'}), 400
@@ -479,6 +515,9 @@ def embed_jd():
 
 @app.route('/parse_resume', methods=['POST'])
 def parse_resume():
+    err = _require_internal_secret()
+    if err: return err
+
     data = request.json
     resume_path = data.get('resume_path', '')
     if not resume_path: return jsonify({'error': 'Missing resume_path'}), 400
@@ -511,6 +550,9 @@ def extract_resume():
 
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
+    err = _require_internal_secret()
+    if err: return err
+
     data         = request.json
     resumes      = data.get('resumes', [])
     jd_text      = data.get('job_description', '')
@@ -518,6 +560,13 @@ def analyze_batch():
     nice_to_have = data.get('nice_to_have_skills', [])
     min_exp      = float(data.get('min_experience', 0))
     max_exp      = float(data.get('max_experience', 99))
+
+    # FIX #3 — SAFETY: Cap batch size to prevent runaway Groq quota burn.
+    # Without this, a single request with 500 resumes would make 1000 Groq calls.
+    MAX_BATCH = int(os.environ.get("MAX_BATCH_SIZE", "50"))
+    if len(resumes) > MAX_BATCH:
+        return jsonify({'error': f'Batch size {len(resumes)} exceeds maximum allowed ({MAX_BATCH}).'}), 400
+
     if not resumes or not jd_text: return jsonify({'error': 'Missing resumes or job_description'}), 400
     jd_embedding, _ = get_embedding(preprocess(jd_text))
 
@@ -580,8 +629,18 @@ def analyze_batch():
 
 @app.route('/health', methods=['GET'])
 def health():
+    # Health endpoint intentionally left open (no secret required) so load balancers
+    # and uptime monitors can reach it. It reveals no sensitive data.
     groq_status = "configured" if GROQ_API_KEY else "not configured (keyword fallback active)"
-    return jsonify({'status': 'ok', 'model': 'all-MiniLM-L6-v2', 'version': '3.0', 'llm': GROQ_MODEL, 'groq_status': groq_status})
+    assemblyai_status = "configured" if ASSEMBLYAI_API_KEY else "not configured (browser transcript only)"
+    return jsonify({
+        'status': 'ok',
+        'model': 'all-MiniLM-L6-v2',
+        'version': '3.1',
+        'llm': GROQ_MODEL,
+        'groq_status': groq_status,
+        'assemblyai_status': assemblyai_status,
+    })
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -593,6 +652,9 @@ def health():
 
 @app.route('/prep_chat', methods=['POST'])
 def prep_chat():
+    err = _require_internal_secret()
+    if err: return err
+
     data              = request.json
     job_title         = data.get('job_title', 'the role')
     job_description   = data.get('job_description', '')
@@ -646,15 +708,6 @@ Always respond in plain conversational text. No markdown headers. Keep replies u
 # ═══════════════════════════════════════════════════════════════════════════════
 # FEATURE: Async Video Interview — AI Transcription + Score
 # ═══════════════════════════════════════════════════════════════════════════════
-# FEATURE: Video Response Scoring — AssemblyAI + Groq
-# POST /score_video_response
-# Body (multipart/form-data OR json):
-#   - audio_url: S3 pre-signed URL to the video/audio file  (preferred)
-#   - transcript: fallback plain text transcript
-#   - question, job_title, job_description
-# Returns: { score, content_score, communication_score, feedback,
-#            strengths, improvements, transcript, speech_metrics }
-# ═══════════════════════════════════════════════════════════════════════════════
 
 ASSEMBLYAI_API_KEY = os.environ.get("ASSEMBLYAI_API_KEY", "")
 ASSEMBLYAI_BASE    = "https://api.assemblyai.com/v2"
@@ -670,7 +723,6 @@ def assemblyai_transcribe(audio_url: str) -> dict:
 
     headers = {"authorization": ASSEMBLYAI_API_KEY, "content-type": "application/json"}
 
-    # Submit transcription job with all analysis features enabled
     payload = {
         "audio_url": audio_url,
         "sentiment_analysis": True,
@@ -686,8 +738,13 @@ def assemblyai_transcribe(audio_url: str) -> dict:
         print(f"[AssemblyAI] Submit error: {e}")
         return {"transcript": "", "metrics": {}, "error": str(e)}
 
-    # Poll until complete (max 120s)
-    for _ in range(60):
+    # FIX #4 — TIMEOUT RACE CONDITION:
+    # The original code polled for up to 60 * 2s = 120s, which is exactly the
+    # gunicorn worker timeout. If transcription takes close to 120s the worker
+    # gets killed mid-poll and the request returns a 502 to the client.
+    # Fix: poll for up to 90s (45 * 2s), leaving a 30s buffer for Groq scoring.
+    # Gunicorn timeout in Dockerfile is kept at 120s (sufficient with this margin).
+    for _ in range(45):   # 45 * 2s = 90s max
         time.sleep(2)
         try:
             poll = requests.get(f"{ASSEMBLYAI_BASE}/transcript/{transcript_id}", headers=headers, timeout=15)
@@ -699,26 +756,22 @@ def assemblyai_transcribe(audio_url: str) -> dict:
 
         status = result.get("status")
         if status == "completed":
-            # Extract speech metrics from AssemblyAI response
             words          = result.get("words", [])
             total_words    = len(words)
-            audio_duration = result.get("audio_duration", 0) or 1  # seconds
+            audio_duration = result.get("audio_duration", 0) or 1
             wpm            = round((total_words / audio_duration) * 60) if audio_duration else 0
 
-            # Sentiment breakdown
             sentiments     = result.get("sentiment_analysis_results", [])
             pos = sum(1 for s in sentiments if s.get("sentiment") == "POSITIVE")
             neg = sum(1 for s in sentiments if s.get("sentiment") == "NEGATIVE")
             neu = sum(1 for s in sentiments if s.get("sentiment") == "NEUTRAL")
             total_sents    = len(sentiments) or 1
-            sentiment_score = round((pos / total_sents) * 100)  # 0-100, higher = more positive
+            sentiment_score = round((pos / total_sents) * 100)
 
-            # Filler word count (common fillers)
             raw_text = (result.get("text") or "").lower()
             fillers  = ["um", "uh", "like", "you know", "basically", "literally", "right", "so"]
             filler_count = sum(raw_text.count(f" {f} ") for f in fillers)
 
-            # Confidence: AssemblyAI provides per-word confidence 0-1
             avg_confidence = round(
                 (sum(w.get("confidence", 0) for w in words) / max(len(words), 1)) * 100
             )
@@ -727,9 +780,9 @@ def assemblyai_transcribe(audio_url: str) -> dict:
                 "words_per_minute":  wpm,
                 "total_words":       total_words,
                 "audio_duration_s":  round(audio_duration),
-                "sentiment_score":   sentiment_score,  # 0-100
+                "sentiment_score":   sentiment_score,
                 "filler_word_count": filler_count,
-                "avg_confidence":    avg_confidence,   # 0-100
+                "avg_confidence":    avg_confidence,
                 "positive_pct":      round((pos / total_sents) * 100),
                 "negative_pct":      round((neg / total_sents) * 100),
                 "neutral_pct":       round((neu / total_sents) * 100),
@@ -801,9 +854,12 @@ Be fair, specific, and encouraging. Return ONLY the JSON, no markdown."""
 
 @app.route('/score_video_response', methods=['POST'])
 def score_video_response():
+    err = _require_internal_secret()
+    if err: return err
+
     data            = request.json or {}
-    audio_url       = data.get("audio_url", "")       # S3 pre-signed URL
-    transcript_in   = data.get("transcript", "")       # fallback transcript
+    audio_url       = data.get("audio_url", "")
+    transcript_in   = data.get("transcript", "")
     question        = data.get("question", "")
     job_title       = data.get("job_title", "the role")
     job_description = data.get("job_description", "")
@@ -811,7 +867,6 @@ def score_video_response():
     speech_metrics  = {}
     final_transcript = transcript_in
 
-    # Step 1: Try AssemblyAI transcription if audio_url provided
     if audio_url and ASSEMBLYAI_API_KEY:
         print(f"[score_video] Using AssemblyAI for audio transcription")
         aai_result = assemblyai_transcribe(audio_url)
@@ -828,7 +883,6 @@ def score_video_response():
     if not final_transcript.strip():
         return jsonify({"error": "No transcript available to score."}), 400
 
-    # Step 2: Score with Groq
     scores = groq_score_response(final_transcript, question, job_title, job_description, speech_metrics)
 
     return jsonify({

@@ -14,6 +14,13 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 const preFilter   = require('../lib/preFilter');
 
+// FIX: Forward the internal secret on every AI service call so the
+// secured endpoints accept the request. If AI_INTERNAL_SECRET is not set,
+// the header is simply omitted (dev/local mode stays compatible).
+const AI_HEADERS = process.env.AI_INTERNAL_SECRET
+    ? { 'X-Internal-Secret': process.env.AI_INTERNAL_SECRET }
+    : {};
+
 const VALID_TRANSITIONS = {
     applied:     ['screened', 'rejected'],
     screened:    ['shortlisted', 'rejected'],
@@ -82,7 +89,6 @@ router.post('/apply', requireAuth, requireRole('candidate'), upload.single('resu
             note: 'Application submitted'
         });
 
-        // FIX #5: use job.companyId._id (populated object) not job.companyId directly
         Notification.create({
             userId:  job.companyId._id,
             type:    'application_received',
@@ -127,7 +133,7 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
                     jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
                     resume_embedding:    existingEmbedding
                 },
-                { timeout: 90000 }
+                { timeout: 90000, headers: AI_HEADERS }
             );
             aiData = aiResponse.data;
         } catch (aiErr) {
@@ -162,11 +168,10 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
                     applicationId,
                     fromStatus: 'applied',
                     toStatus: 'rejected',
-                    changedBy: null, // system-initiated rejection, not the candidate
+                    changedBy: null,
                     note: `Auto-rejected by system: ${filterResult.reason}`
                 });
 
-                // FIX #5: candidateId is already a plain ObjectId here (not a populated doc)
                 Notification.create({
                     userId: candidateId,
                     type: 'status_rejected',
@@ -210,11 +215,10 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
             applicationId,
             fromStatus: 'applied',
             toStatus: 'screened',
-            changedBy: null, // system AI screened, not the candidate
+            changedBy: null,
             note: `AI scored: ${application.finalScore?.toFixed(1)}%`
         });
 
-        // FIX #5: candidateId is already a plain ObjectId here — correct
         Notification.create({
             userId: candidateId,
             type: 'status_analyzed',
@@ -358,7 +362,7 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
                 jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
                 resume_embedding:    existingEmbedding
             },
-            { timeout: 90000 }
+            { timeout: 90000, headers: AI_HEADERS }
         );
 
         const aiData = response.data;
@@ -387,7 +391,6 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
             ).catch(console.error);
         }
 
-        // FIX #5: use ._id on the populated candidateId object
         Notification.create({
             userId: application.candidateId._id,
             type: 'status_analyzed',
@@ -454,7 +457,6 @@ router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res
 
         const notif = notifMap[status];
         if (notif) {
-            // FIX #5: use ._id on the populated candidateId object
             Notification.create({
                 userId:  application.candidateId._id,
                 type:    notif.type,
