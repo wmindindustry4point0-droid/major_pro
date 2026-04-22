@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom';
 // FIX #20: Use shared safe auth utilities
 import { getUser, clearAuth } from '../utils/auth';
 
-import Overview from '../components/dashboard/Overview';
+import { CompanyOverview as Overview } from '../components/dashboard/Overview';
 import JobManagement from '../components/dashboard/JobManagement';
 import ResumeAnalyzer from '../components/dashboard/ResumeAnalyzer';
 import Analytics from '../components/dashboard/Analytics';

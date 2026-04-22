@@ -60,6 +60,8 @@ function preFilter(profile, job, { mustHaveThreshold = 0.8 } = {}) {
     const missing = mustHave.filter(s => !candidateSkills.includes(normalize(s)));
     return {
       pass: false,
+      missingSkills: missing,   // full array so callers can store it
+      matchedSkills: mustMatches.map(s => mustHave.find(m => normalize(m) === normalize(s)) || s),
       reason: `Missing ${missing.length} of ${mustHave.length} required skills: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '...' : ''}`
     };
   }

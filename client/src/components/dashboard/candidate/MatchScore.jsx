@@ -59,22 +59,31 @@ const MatchScore = () => {
         };
     };
 
-    const parseMissingSkills = (app) => {
-        // Prefer the structured array field returned by the AI service
+    const parseMissingSkills = (app, jobSkills, candidateSkillsLower) => {
+        // 1. Structured array from server (AI path or pre-filter path after server fix)
         if (Array.isArray(app.skillsMissing) && app.skillsMissing.length > 0) {
             return app.skillsMissing.map(s => (typeof s === 'string' ? s : String(s)).trim()).filter(Boolean);
         }
         if (Array.isArray(app.missingSkills) && app.missingSkills.length > 0) {
             return app.missingSkills.map(s => (typeof s === 'string' ? s : String(s)).trim()).filter(Boolean);
         }
-        // Legacy: fall back to parsing the free-text aiFeedback string
-        const feedbackStr = app.aiFeedback;
-        if (!feedbackStr) return [];
-        const match = feedbackStr.match(/Missing skills:\s*(.*)/i);
-        if (match && match[1]) {
-            let str = match[1].replace('None.', '').replace('.', '').trim();
+        // 2. Parse pre-filter aiFeedback string: "Pre-screened: Missing 13 of 15 required skills: Go, C++..."
+        const feedbackStr = app.aiFeedback || '';
+        const preScreenMatch = feedbackStr.match(/Missing \d+ of \d+ required skills?:\s*(.+)/i);
+        if (preScreenMatch) {
+            return preScreenMatch[1].replace(/\.{3}$/, '').trim().split(',').map(s => s.trim()).filter(Boolean);
+        }
+        // 3. Legacy free-text format
+        const legacyMatch = feedbackStr.match(/Missing skills:\s*(.*)/i);
+        if (legacyMatch && legacyMatch[1]) {
+            let str = legacyMatch[1].replace('None.', '').replace('.', '').trim();
             if (str === 'None' || str === '') return [];
             return str.split(',').map(s => s.trim()).filter(Boolean);
+        }
+        // 4. Final fallback: derive from job skills vs candidate profile
+        //    (covers old pre-filter rejections before server fix was applied)
+        if (jobSkills && jobSkills.length > 0 && candidateSkillsLower && candidateSkillsLower.length > 0) {
+            return jobSkills.filter(s => !candidateSkillsLower.includes(s.toLowerCase()));
         }
         return [];
     };
@@ -127,12 +136,16 @@ const MatchScore = () => {
                 <div className="grid grid-cols-1 gap-4 sm:gap-6">
                     {applications.map(app => {
                         const scoreData = getScoreColor(app.matchScore);
-                        const missingSkills = parseMissingSkills(app);
 
-                        const jobSkills = (app.jobId?.requiredSkills || []).map(extractSkillString).filter(Boolean);
+                        const jobSkills = [
+                            ...(app.jobId?.requiredSkills || []),
+                            ...(app.jobId?.mustHaveSkills || [])
+                        ].map(extractSkillString).filter((s, i, arr) => s && arr.indexOf(s) === i);
                         const candidateSkills = (profile?.extractedSkills || []).map(extractSkillString).filter(Boolean);
                         const candidateSkillsLower = candidateSkills.map(s => s.toLowerCase());
                         const matchedSkills = jobSkills.filter(s => candidateSkillsLower.includes(s.toLowerCase()));
+                        // Pass jobSkills + candidateSkillsLower so fallback derivation works
+                        const missingSkills = parseMissingSkills(app, jobSkills, candidateSkillsLower);
 
                         return (
                             <div

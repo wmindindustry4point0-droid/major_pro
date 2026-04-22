@@ -152,8 +152,10 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
                 application.rejectedAt   = new Date();
                 application.finalScore   = 0;
                 application.matchScore   = 0;
-                application.weaknesses   = [filterResult.reason];
-                application.aiFeedback   = `Pre-screened: ${filterResult.reason}`;
+                application.skillsMissing  = filterResult.missingSkills || [];
+                application.skillsMatched  = filterResult.matchedSkills || [];
+                application.weaknesses     = [filterResult.reason];
+                application.aiFeedback     = `Pre-screened: ${filterResult.reason}`;
                 await application.save();
 
                 await StageHistory.create({

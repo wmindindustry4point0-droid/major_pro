@@ -1,10 +1,14 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
-import { Briefcase, Target, FileText, TrendingUp, ChevronRight, Activity } from 'lucide-react';
+import {
+    Briefcase, Target, FileText, TrendingUp, ChevronRight,
+    Activity, Users, CheckSquare, Clock, BarChart2
+} from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
+// ── Shared stat card ──────────────────────────────────────────────────────────
 const OverviewCard = ({ title, value, icon: Icon, trend, colorClass, isDark }) => (
     <div className={`border p-6 rounded-2xl relative overflow-hidden group transition-all ${
         isDark
@@ -27,13 +31,13 @@ const OverviewCard = ({ title, value, icon: Icon, trend, colorClass, isDark }) =
     </div>
 );
 
-const CandidateOverview = () => {
+// ── Candidate Dashboard Overview ──────────────────────────────────────────────
+export const CandidateOverview = () => {
     const { isDark } = useTheme();
     const [profile,      setProfile]      = useState(null);
     const [applications, setApplications] = useState([]);
     const [isLoading,    setIsLoading]    = useState(true);
 
-    // FIX #3 & #15: Read user/token once, stably
     const { user, token } = useMemo(() => {
         try {
             return {
@@ -45,15 +49,12 @@ const CandidateOverview = () => {
         }
     }, []);
 
-    // FIX #3: All API calls now include Authorization header.
-    // Without it, requireAuth middleware returns 401 and all data silently fails to load.
     const authHeaders = useMemo(() => (
         token ? { Authorization: `Bearer ${token}` } : {}
     ), [token]);
 
     useEffect(() => {
         if (!user?._id) { setIsLoading(false); return; }
-
         const fetchDashboardData = async () => {
             try {
                 const [profileRes, appRes] = await Promise.all([
@@ -61,7 +62,6 @@ const CandidateOverview = () => {
                         .catch(() => ({ data: null })),
                     axios.get(`${API}/api/applications/candidate/${user._id}`, { headers: authHeaders })
                 ]);
-
                 setProfile(profileRes.data);
                 setApplications(appRes.data);
             } catch (error) {
@@ -81,18 +81,13 @@ const CandidateOverview = () => {
         ? Math.round(applications.reduce((acc, app) => acc + (app.matchScore || 0), 0) / applications.length) + '%'
         : 'N/A';
 
-    // Theme tokens
     const cardBg    = isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm';
     const headColor = isDark ? 'text-white'      : 'text-slate-900';
     const subColor  = isDark ? 'text-slate-400'  : 'text-slate-500';
     const rowBg     = isDark ? 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600' : 'bg-slate-50 border-slate-200 hover:border-slate-300';
 
     if (isLoading) {
-        return (
-            <div className={`text-center mt-20 animate-pulse text-sm ${subColor}`}>
-                Loading Analytics...
-            </div>
-        );
+        return <div className={`text-center mt-20 animate-pulse text-sm ${subColor}`}>Loading Analytics...</div>;
     }
 
     return (
@@ -105,7 +100,6 @@ const CandidateOverview = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Recent Applications */}
                 <div className={`lg:col-span-2 border rounded-2xl p-6 ${cardBg}`}>
                     <h3 className={`text-xl font-bold mb-6 ${headColor}`}>Recent Applications</h3>
                     {applications.length === 0 ? (
@@ -143,7 +137,6 @@ const CandidateOverview = () => {
                     )}
                 </div>
 
-                {/* AI Insights Panel */}
                 <div className={`border rounded-2xl p-6 relative overflow-hidden ${
                     isDark
                         ? 'bg-gradient-to-br from-indigo-900/40 to-slate-900 border-indigo-500/20'
@@ -153,7 +146,6 @@ const CandidateOverview = () => {
                     <h3 className={`text-xl font-bold mb-4 flex items-center gap-2 ${headColor}`}>
                         <Target className="w-5 h-5 text-indigo-400" /> AI Insights
                     </h3>
-
                     {!profile ? (
                         <div className={`text-sm p-4 rounded-xl ${isDark ? 'bg-slate-800/50 text-slate-400' : 'bg-slate-100 text-slate-500'}`}>
                             Upload your resume in the Profile tab to unlock personalized AI career insights and top job matches.
@@ -174,12 +166,11 @@ const CandidateOverview = () => {
                                         <span className={`text-xs px-2 py-1 rounded-md border ${
                                             isDark ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-white text-slate-500 border-slate-200'
                                         }`}>
-                                            +{(profile.extractedSkills.length - 6)} more
+                                            +{profile.extractedSkills.length - 6} more
                                         </span>
                                     )}
                                 </div>
                             </div>
-
                             <div className={`p-4 rounded-xl border ${isDark ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-indigo-50 border-indigo-200'}`}>
                                 <h4 className={`font-bold text-sm mb-1 ${headColor}`}>Career Trajectory Matches</h4>
                                 <p className={`text-xs mb-3 ${subColor}`}>Based on your semantic vector profile.</p>
@@ -187,6 +178,179 @@ const CandidateOverview = () => {
                                     View Recommended Jobs <ChevronRight className="w-4 h-4" />
                                 </button>
                             </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// ── Company Dashboard Overview ────────────────────────────────────────────────
+export const CompanyOverview = () => {
+    const { isDark } = useTheme();
+    const [jobs,         setJobs]         = useState([]);
+    const [applications, setApplications] = useState([]);
+    const [isLoading,    setIsLoading]    = useState(true);
+
+    const { user, token } = useMemo(() => {
+        try {
+            return {
+                user:  JSON.parse(localStorage.getItem('user')),
+                token: localStorage.getItem('token'),
+            };
+        } catch {
+            return { user: null, token: null };
+        }
+    }, []);
+
+    const authHeaders = useMemo(() => (
+        token ? { Authorization: `Bearer ${token}` } : {}
+    ), [token]);
+
+    useEffect(() => {
+        if (!user?._id) { setIsLoading(false); return; }
+        const fetchData = async () => {
+            try {
+                const jobsRes = await axios.get(`${API}/api/jobs`, { headers: authHeaders });
+                const myJobs  = (jobsRes.data || []).filter(j =>
+                    (j.companyId?._id || j.companyId)?.toString() === user._id?.toString()
+                );
+                setJobs(myJobs);
+
+                if (myJobs.length > 0) {
+                    const appResults = await Promise.all(
+                        myJobs.map(j =>
+                            axios.get(`${API}/api/applications/job/${j._id}`, { headers: authHeaders })
+                                .then(r => r.data)
+                                .catch(() => [])
+                        )
+                    );
+                    setApplications(appResults.flat());
+                }
+            } catch (err) {
+                console.error('Company overview fetch error:', err);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+        fetchData();
+    }, [user?._id, authHeaders]);
+
+    const totalApplicants = applications.length;
+    const shortlisted     = applications.filter(a => a.status === 'shortlisted' || a.status === 'selected').length;
+    const pending         = applications.filter(a => a.status === 'applied' || a.status === 'screened').length;
+    const avgScore        = applications.length > 0
+        ? Math.round(applications.reduce((s, a) => s + (a.finalScore || a.matchScore || 0), 0) / applications.length)
+        : null;
+
+    const jobAppCount = jobs.map(j => ({
+        ...j,
+        count: applications.filter(a => {
+            const id = typeof a.jobId === 'object' ? a.jobId?._id : a.jobId;
+            return id?.toString() === j._id?.toString();
+        }).length
+    })).sort((a, b) => b.count - a.count);
+
+    const recentApps = [...applications]
+        .sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt))
+        .slice(0, 5);
+
+    const cardBg    = isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm';
+    const headColor = isDark ? 'text-white'     : 'text-slate-900';
+    const subColor  = isDark ? 'text-slate-400' : 'text-slate-500';
+    const rowBg     = isDark
+        ? 'bg-slate-800/50 border-slate-700/50 hover:border-slate-600'
+        : 'bg-slate-50 border-slate-200 hover:border-slate-300';
+
+    if (isLoading) {
+        return <div className={`text-center mt-20 animate-pulse text-sm ${subColor}`}>Loading Dashboard...</div>;
+    }
+
+    return (
+        <div className="space-y-8 pb-12">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <OverviewCard title="Jobs Posted"      value={jobs.length}     icon={Briefcase}   colorClass="indigo"  isDark={isDark} />
+                <OverviewCard title="Total Applicants" value={totalApplicants} icon={Users}       colorClass="purple"  isDark={isDark} />
+                <OverviewCard title="Shortlisted"      value={shortlisted}     icon={CheckSquare} colorClass="emerald" isDark={isDark} />
+                <OverviewCard title="Pending Review"   value={pending}         icon={Clock}       colorClass="yellow"  isDark={isDark} />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className={`lg:col-span-2 border rounded-2xl p-6 ${cardBg}`}>
+                    <h3 className={`text-xl font-bold mb-6 ${headColor}`}>Recent Applicants</h3>
+                    {recentApps.length === 0 ? (
+                        <div className={`text-center py-8 rounded-xl border border-dashed text-sm ${
+                            isDark ? 'bg-slate-800/20 border-slate-700 text-slate-500' : 'bg-slate-50 border-slate-300 text-slate-400'
+                        }`}>
+                            No applications yet. Post a job to start receiving candidates.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {recentApps.map(app => (
+                                <div key={app._id} className={`flex items-center justify-between p-4 rounded-xl border transition-colors ${rowBg}`}>
+                                    <div>
+                                        <h4 className={`font-bold text-sm ${headColor}`}>
+                                            {app.candidateId?.name || 'Candidate'}
+                                        </h4>
+                                        <p className={`text-xs ${subColor}`}>
+                                            {typeof app.jobId === 'object' ? app.jobId?.title : 'Job'} &middot;{' '}
+                                            {app.appliedAt ? new Date(app.appliedAt).toLocaleDateString() : ''}
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center gap-3">
+                                        {(app.finalScore ?? app.matchScore) != null && (
+                                            <span className="text-xs font-bold bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded-full border border-indigo-500/20">
+                                                {app.finalScore ?? app.matchScore}% AI
+                                            </span>
+                                        )}
+                                        <span className={`text-xs font-bold px-3 py-1 rounded-full capitalize ${
+                                            app.status === 'shortlisted' ? 'bg-emerald-500/20 text-emerald-400' :
+                                            app.status === 'selected'    ? 'bg-yellow-500/20 text-yellow-400'   :
+                                            app.status === 'rejected'    ? 'bg-rose-500/20   text-rose-400'     :
+                                            'bg-slate-500/20 text-slate-400'
+                                        }`}>
+                                            {app.status}
+                                        </span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                <div className={`border rounded-2xl p-6 relative overflow-hidden ${
+                    isDark
+                        ? 'bg-gradient-to-br from-indigo-900/40 to-slate-900 border-indigo-500/20'
+                        : 'bg-gradient-to-br from-indigo-50 to-white border-indigo-200'
+                }`}>
+                    <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/20 blur-3xl pointer-events-none" />
+                    <h3 className={`text-xl font-bold mb-4 flex items-center gap-2 ${headColor}`}>
+                        <BarChart2 className="w-5 h-5 text-indigo-400" /> Job Performance
+                    </h3>
+
+                    {avgScore != null && (
+                        <div className={`mb-4 p-3 rounded-xl border text-center ${isDark ? 'bg-indigo-500/10 border-indigo-500/20' : 'bg-indigo-50 border-indigo-200'}`}>
+                            <p className={`text-xs font-bold uppercase tracking-wider mb-1 ${subColor}`}>Avg AI Score</p>
+                            <p className={`text-3xl font-bold ${isDark ? 'text-indigo-300' : 'text-indigo-600'}`}>{avgScore}%</p>
+                        </div>
+                    )}
+
+                    <h4 className={`text-xs font-bold uppercase tracking-wider mb-3 ${subColor}`}>Top Jobs by Applicants</h4>
+                    {jobAppCount.length === 0 ? (
+                        <p className={`text-sm ${subColor}`}>No jobs posted yet.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {jobAppCount.slice(0, 5).map(j => (
+                                <div key={j._id} className="flex items-center justify-between">
+                                    <span className={`text-xs truncate max-w-[140px] ${headColor}`}>{j.title}</span>
+                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                        isDark ? 'bg-slate-700 text-slate-300' : 'bg-slate-100 text-slate-600'
+                                    }`}>
+                                        {j.count} applicant{j.count !== 1 ? 's' : ''}
+                                    </span>
+                                </div>
+                            ))}
                         </div>
                     )}
                 </div>
