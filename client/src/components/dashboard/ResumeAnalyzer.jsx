@@ -40,6 +40,7 @@ const ResumeAnalyzer = ({ user }) => {
     const [error, setError] = useState('');
     const [selectedCandidate, setSelectedCandidate] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [activePdfUrl, setActivePdfUrl] = useState(null);
 
     const tabs = [
         { id: 'description', label: 'Job Description', icon: FileText },
@@ -184,8 +185,14 @@ const ResumeAnalyzer = ({ user }) => {
                 ? { ...c, candidateStatus: newStatus } : c
         ));
 
-    const openCandidateModal  = (c) => { setSelectedCandidate(c); setIsModalOpen(true); };
-    const closeCandidateModal = () => { setIsModalOpen(false); setTimeout(() => setSelectedCandidate(null), 300); };
+    const openCandidateModal = async (c) => {
+        setSelectedCandidate(c);
+        setActivePdfUrl(null);
+        setIsModalOpen(true);
+        const url = await getCandidateFileUrl(c);
+        setActivePdfUrl(url);
+    };
+    const closeCandidateModal = () => { setIsModalOpen(false); setTimeout(() => { setSelectedCandidate(null); setActivePdfUrl(null); }, 300); };
 
     const getScoreLabel = (score) => {
         if (score >= 80) return { text: 'Strong Match',   color: 'emerald' };
@@ -197,17 +204,23 @@ const ResumeAnalyzer = ({ user }) => {
         return type === 'text' ? `text-${c}-400` : `bg-${c}-500`;
     };
 
-    // BUG 9 FIX: Memoize blob URLs and revoke them on unmount to prevent memory leaks.
-    // Previously, URL.createObjectURL was called on every render inside getCandidateFileUrl.
-    const blobUrlMapRef = useRef({});
+    // PDF URL management:
+    // When files are freshly uploaded this session, use a blob URL (instant, no server round-trip).
+    // When loading a saved workspace, files are gone from memory — fetch a fresh S3 signed URL instead.
+    // Signed URLs are cached in a ref so we don't hit the server on every re-render.
+    const blobUrlMapRef  = useRef({});   // fileName -> blob URL (in-memory files)
+    const signedUrlCache = useRef({});   // s3Key    -> { url, fetchedAt }
+    const SIGNED_URL_TTL = 50 * 60 * 1000; // re-fetch after 50 min (URLs expire in 60 min)
+
+    // Revoke blob URLs on unmount to avoid memory leaks
     useEffect(() => {
         return () => {
-            // Revoke all blob URLs when component unmounts
             Object.values(blobUrlMapRef.current).forEach(url => URL.revokeObjectURL(url));
             blobUrlMapRef.current = {};
         };
     }, []);
-    // Also revoke stale URLs when selectedFiles changes
+
+    // Remove stale blob URLs when selectedFiles changes
     useEffect(() => {
         const validNames = new Set(selectedFiles.map(f => f.name));
         Object.keys(blobUrlMapRef.current).forEach(name => {
@@ -218,15 +231,41 @@ const ResumeAnalyzer = ({ user }) => {
         });
     }, [selectedFiles]);
 
-    const getCandidateFileUrl = useCallback((fileName) => {
-        if (!fileName) return null;
-        const f = selectedFiles.find(f => f.name === fileName);
-        if (!f) return null;
-        if (!blobUrlMapRef.current[fileName]) {
-            blobUrlMapRef.current[fileName] = URL.createObjectURL(f);
+    // Returns a blob URL if the file is still in memory, otherwise fetches a
+    // fresh signed URL from the server (cached for 50 min).
+    const getCandidateFileUrl = useCallback(async (candidate) => {
+        if (!candidate) return null;
+
+        // 1. In-memory blob (fresh upload in same session)
+        const localFile = selectedFiles.find(f => f.name === candidate.fileName);
+        if (localFile) {
+            if (!blobUrlMapRef.current[candidate.fileName]) {
+                blobUrlMapRef.current[candidate.fileName] = URL.createObjectURL(localFile);
+            }
+            return blobUrlMapRef.current[candidate.fileName];
         }
-        return blobUrlMapRef.current[fileName];
-    }, [selectedFiles]);
+
+        // 2. S3 key stored from analysis result — fetch a signed URL
+        const s3Key = candidate.s3Key;
+        if (!s3Key) return null;
+
+        const cached = signedUrlCache.current[s3Key];
+        if (cached && Date.now() - cached.fetchedAt < SIGNED_URL_TTL) {
+            return cached.url;
+        }
+
+        try {
+            const res = await axios.get(
+                `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/jobs/workspaces/resume-url`,
+                { params: { s3Key }, headers: authHeader }
+            );
+            signedUrlCache.current[s3Key] = { url: res.data.url, fetchedAt: Date.now() };
+            return res.data.url;
+        } catch (err) {
+            console.error('Failed to get signed URL for resume:', err);
+            return null;
+        }
+    }, [selectedFiles, authHeader]);
 
     // BUG 11 FIX: Mobile dropdown ref — must be declared here (before any early
     // return) to satisfy React's Rules of Hooks. Hooks cannot be called after a
@@ -746,7 +785,7 @@ const ResumeAnalyzer = ({ user }) => {
                                             className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs sm:text-sm border transition-all ${isDark ? 'bg-slate-800 hover:bg-rose-500/10 border-slate-700 hover:border-rose-500/30 text-slate-300 hover:text-rose-400' : 'bg-gray-100 hover:bg-rose-50 border-gray-200 hover:border-rose-200 text-gray-600 hover:text-rose-500'}`}>
                                             <ThumbsDown className="w-4 h-4" />Reject
                                         </button>
-                                        <a href={getCandidateFileUrl(selectedCandidate.fileName)} download={selectedCandidate.fileName}
+                                        <a href={activePdfUrl || '#'} download={selectedCandidate.fileName}
                                             className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl font-bold text-xs sm:text-sm border transition-all ${isDark ? 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300' : 'bg-gray-100 hover:bg-gray-200 border-gray-200 text-gray-600'}`}>
                                             <Download className="w-4 h-4" />PDF
                                         </a>
@@ -758,10 +797,15 @@ const ResumeAnalyzer = ({ user }) => {
                                 <div className={`p-3 border-b border-slate-700/50 flex items-center gap-2 text-sm font-semibold ${sub}`}>
                                     <FileBadge className="w-4 h-4" />Original Resume Preview
                                 </div>
-                                {getCandidateFileUrl(selectedCandidate.fileName) ? (
-                                    <iframe src={`${getCandidateFileUrl(selectedCandidate.fileName)}#toolbar=0`} className="w-full flex-1 border-none" title="Resume Preview" />
+                                {activePdfUrl ? (
+                                    <iframe src={`${activePdfUrl}#toolbar=0`} className="w-full flex-1 border-none" title="Resume Preview" />
                                 ) : (
-                                    <div className={`flex-1 flex items-center justify-center text-sm ${muted}`}>Unable to load PDF preview.</div>
+                                    <div className={`flex-1 flex flex-col items-center justify-center gap-3 text-center px-8 ${muted}`}>
+                                        <FileBadge className="w-10 h-10 opacity-40" />
+                                        <p className="text-sm font-medium">
+                                            {selectedCandidate?.s3Key ? 'Loading preview…' : 'PDF not available — re-upload to preview'}
+                                        </p>
+                                    </div>
                                 )}
                             </div>
                         </motion.div>

@@ -173,26 +173,46 @@ router.post('/analyze-fit', requireAuth, requireRole('candidate'), upload.single
 });
 
 // ── Analyze Workspace (batch) ────────────────────────────────────────────────
+// FIX: PDFs are now kept in S3 under resumes/workspace/<key> so the frontend
+// can preview them at any time via a fresh signed URL. We no longer delete
+// files in the `finally` block; instead we move the tmp key to a permanent
+// key before sending them to the AI service.
 router.post('/analyze-workspace', requireAuth, requireRole('company'), upload.array('resumes', 200), async (req, res) => {
-    const uploadedKeys = [];
+    const permanentKeys = []; // track keys we've committed so we can clean up on hard failure
     try {
         const { jobDescription, requiredSkills, mustHaveSkills, niceToHaveSkills, minExperience } = req.body;
         if (!req.files || req.files.length === 0)
             return res.status(400).json({ error: 'No resumes uploaded.' });
 
-        req.files.forEach(f => uploadedKeys.push(f.key));
+        // Rename from tmp path to a permanent workspace path so files survive after analysis.
+        const { CopyObjectCommand } = require('@aws-sdk/client-s3');
+        const fileRecords = await Promise.all(req.files.map(async (file, index) => {
+            const permanentKey = `resumes/workspace/${req.user._id}/${Date.now()}_${index}_${file.originalname}`;
+            // Copy to permanent location
+            await s3.send(new CopyObjectCommand({
+                Bucket: BUCKET_NAME,
+                CopySource: `${BUCKET_NAME}/${file.key}`,
+                Key: permanentKey,
+            }));
+            // Delete the tmp object
+            await deleteS3Object(file.key);
+            permanentKeys.push(permanentKey);
+            // Generate a 24-hour signed URL for the AI service to read
+            const signedUrl = await getS3SignedUrl(permanentKey, 86400);
+            return {
+                id: `req_${Date.now()}_${index}`,
+                path: signedUrl,
+                fileName: file.originalname,
+                s3Key: permanentKey,
+            };
+        }));
 
-        const resumesPayload = await Promise.all(req.files.map(async (file, index) => ({
-            id: `temp_req_${Date.now()}_${index}`,
-            path: await getS3SignedUrl(file.key, 1800),
-            fileName: file.originalname
-        })));
-
+        let aiResponse;
         try {
-            const response = await axios.post(
+            aiResponse = await axios.post(
                 `${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/analyze_batch`,
                 {
-                    resumes:             resumesPayload,
+                    resumes:             fileRecords.map(f => ({ id: f.id, path: f.path, fileName: f.fileName })),
                     job_description:     jobDescription,
                     must_have_skills:    parseSkills(mustHaveSkills || requiredSkills),
                     nice_to_have_skills: parseSkills(niceToHaveSkills),
@@ -201,15 +221,44 @@ router.post('/analyze-workspace', requireAuth, requireRole('company'), upload.ar
                 },
                 { timeout: 300000, headers: AI_HEADERS }
             );
-            res.json(response.data);
         } catch (aiError) {
             console.error('AI Batch Error:', aiError.message, aiError.response?.data);
-            res.status(500).json({ error: 'AI Batch Analysis failed' });
+            return res.status(500).json({ error: 'AI Batch Analysis failed' });
         }
+
+        // Attach s3Key to each analyzed candidate result so the frontend can
+        // request a fresh signed URL at view time.
+        const candidates = aiResponse.data?.analyzed_candidates || [];
+        const enriched = candidates.map(c => {
+            const record = fileRecords.find(f => f.fileName === c.fileName);
+            return {
+                ...c,
+                s3Key: record?.s3Key || null,
+            };
+        });
+
+        res.json({ ...aiResponse.data, analyzed_candidates: enriched });
+    } catch (err) {
+        // Hard failure: clean up any permanent keys we already wrote
+        await Promise.all(permanentKeys.map(deleteS3Object));
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── Get signed PDF URL for workspace candidate ───────────────────────────────
+// Called by the frontend whenever a user opens the candidate modal so the
+// signed URL is always fresh (S3 signed URLs expire).
+router.get('/workspaces/resume-url', requireAuth, requireRole('company'), async (req, res) => {
+    try {
+        const { s3Key } = req.query;
+        if (!s3Key) return res.status(400).json({ error: 's3Key is required' });
+        // Basic ownership check: key must start with the requesting user's id
+        if (!s3Key.includes(req.user._id.toString()))
+            return res.status(403).json({ error: 'Access denied.' });
+        const url = await getS3SignedUrl(s3Key, 3600); // 1-hour URL
+        res.json({ url });
     } catch (err) {
         res.status(500).json({ error: err.message });
-    } finally {
-        await Promise.all(uploadedKeys.map(deleteS3Object));
     }
 });
 
