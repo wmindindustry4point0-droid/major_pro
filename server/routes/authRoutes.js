@@ -241,6 +241,8 @@ router.post('/change-password', requireAuth, async (req, res) => {
         if (!match) return res.status(401).json({ error: 'Current password is incorrect.' });
         user.password = await bcrypt.hash(newPassword, 10);
         await user.save();
+        // Invalidate any outstanding OTPs for this email so stolen OTPs can't be reused
+        await Otp.deleteMany({ email: user.email.toLowerCase() }).catch(console.error);
         res.json({ message: 'Password changed successfully.' });
     } catch (err) {
         console.error('change-password error:', err.message);
