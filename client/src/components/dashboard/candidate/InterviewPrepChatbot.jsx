@@ -3,8 +3,9 @@ import axios from 'axios';
 import { BrainCircuit, Send, RefreshCw, Loader2, ChevronDown, Mic, MicOff } from 'lucide-react';
 import { useTheme } from '../../../context/ThemeContext';
 
-const API    = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-const AI_URL = import.meta.env.VITE_AI_URL  || 'http://localhost:5001';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+// NOTE: /prep_chat is proxied through the Node backend (/api/ai/prep_chat)
+// so the browser never needs a direct connection to the AI service.
 
 export default function InterviewPrepChatbot({ applicationId, jobTitle, jobDescription, candidateSkills }) {
     const { isDark } = useTheme();
@@ -56,7 +57,7 @@ export default function InterviewPrepChatbot({ applicationId, jobTitle, jobDescr
         setLoading(true);
 
         try {
-            const { data } = await axios.post(`${AI_URL}/prep_chat`, {
+            const { data } = await axios.post(`${API}/api/ai/prep_chat`, {
                 job_title:        jobTitle || 'the role',
                 job_description:  jobDescription || '',
                 candidate_skills: candidateSkills || [],

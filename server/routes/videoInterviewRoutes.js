@@ -13,12 +13,6 @@ const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 
 const AI_URL = process.env.AI_SERVICE_URL || 'http://localhost:5001';
 
-// FIX #5: Forward the internal secret on every AI service call so the
-// secured /score_video_response endpoint accepts the request.
-const AI_HEADERS = process.env.AI_INTERNAL_SECRET
-    ? { 'X-Internal-Secret': process.env.AI_INTERNAL_SECRET }
-    : {};
-
 function sendVideoEmail({ toEmail, toName, subject, html }) {
     const body = JSON.stringify({
         sender: { name: 'HireMind AI', email: process.env.BREVO_SENDER_EMAIL },
@@ -101,11 +95,7 @@ router.post('/:id/respond', requireAuth, requireRole('candidate'), videoUpload.s
             const { data } = await axios.post(`${AI_URL}/score_video_response`, {
                 audio_url: audioUrl || '', transcript: transcript || '',
                 question, job_title: vi.jobId?.title || '', job_description: vi.jobId?.description || '',
-            }, {
-                timeout: 180000,
-                // FIX #5: forward internal secret header
-                headers: AI_HEADERS,
-            });
+            }, { timeout: 310000 }); // 310s > gunicorn 300s so we get a clean AI error, not a socket hang
             aiResult = { score: data.score, contentScore: data.content_score, commScore: data.communication_score, feedback: data.feedback, strengths: data.strengths || [], improvements: data.improvements || [], transcript: data.transcript || transcript || '', speechMetrics: data.speech_metrics || {} };
         } catch (e) { console.error('[video score]', e.message); }
 
@@ -137,6 +127,7 @@ router.post('/:id/respond', requireAuth, requireRole('candidate'), videoUpload.s
 });
 
 // GET /api/video-interviews/application/:applicationId
+// FIX #7: Added ownership check — only the owning candidate or company may access this
 router.get('/application/:applicationId', requireAuth, async (req, res) => {
     try {
         const vi = await VideoInterview.findOne({ applicationId: req.params.applicationId });
@@ -169,28 +160,6 @@ router.get('/company/all', requireAuth, requireRole('company'), async (req, res)
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// FIX #6 — MISSING ROUTE: PATCH /api/video-interviews/:id/status
-// VideoReviewPanel.jsx calls this via `markReviewed()` but the route did not
-// exist — every click silently failed with a 404. Now it's properly implemented
-// with an ownership check so only the owning company can update the status.
-router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res) => {
-    try {
-        const { status } = req.body;
-        const ALLOWED_STATUSES = ['reviewed'];  // companies can only manually mark 'reviewed'
-        if (!status || !ALLOWED_STATUSES.includes(status)) {
-            return res.status(400).json({ error: `Invalid status. Allowed: ${ALLOWED_STATUSES.join(', ')}` });
-        }
-
-        const vi = await VideoInterview.findById(req.params.id);
-        if (!vi) return res.status(404).json({ error: 'Not found.' });
-        if (vi.companyId.toString() !== req.user._id.toString()) return res.status(403).json({ error: 'Access denied.' });
-
-        vi.status = status;
-        await vi.save();
-        res.json({ _id: vi._id, status: vi.status });
-    } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 // GET /api/video-interviews/:id — company fetches full results for one interview
 router.get('/:id', requireAuth, requireRole('company'), async (req, res) => {
     try {
@@ -204,9 +173,7 @@ router.get('/:id', requireAuth, requireRole('company'), async (req, res) => {
             if (obj.videoS3Key) obj.videoUrl = await getS3SignedUrl(obj.videoS3Key, 7200).catch(() => null);
             return obj;
         }));
-        // NOTE: Auto-marking as 'reviewed' on GET is removed — the company now
-        // explicitly marks via PATCH /:id/status. This prevents a video from
-        // being marked reviewed just because someone opened it by accident.
+        if (vi.status === 'submitted') { vi.status = 'reviewed'; await vi.save(); }
         res.json({ ...vi.toObject(), responses });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
