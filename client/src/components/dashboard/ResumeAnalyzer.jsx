@@ -141,6 +141,19 @@ const ResumeAnalyzer = ({ user }) => {
         } finally { setIsAnalyzing(false); }
     };
 
+    // FIX: escape CSV fields to prevent formula injection and broken columns for
+    // values containing commas, quotes, or leading = / + / - / @ characters.
+    const escapeCSV = (val) => {
+        const s = String(val ?? '');
+        // Strip leading formula-injection chars
+        const safe = s.replace(/^[=+\-@\t\r]/, "'$&");
+        // Wrap in quotes if the value contains a comma, quote, or newline
+        if (safe.includes(',') || safe.includes('"') || safe.includes('\n')) {
+            return '"' + safe.replace(/"/g, '""') + '"';
+        }
+        return safe;
+    };
+
     const handleExportCSV = () => {
         if (!analysisResults.length) return;
         const headers = ['Rank','Candidate Name','Email','Phone','Match Score','Skills Found','Missing Skills','Status'];
@@ -151,11 +164,18 @@ const ResumeAnalyzer = ({ user }) => {
             (r.missingSkills || []).join('; '),
             r.status
         ]);
-        const csv = 'data:text/csv;charset=utf-8,' + headers.join(',') + '\n' + rows.map(r => r.join(',')).join('\n');
+        // FIX: escape each field; join with comma (not encodeURI which mangles semicolons)
+        const csvContent = [headers, ...rows].map(row => row.map(escapeCSV).join(',')).join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url  = URL.createObjectURL(blob);
         const link = document.createElement('a');
-        link.setAttribute('href', encodeURI(csv));
-        link.setAttribute('download', `hiremind_export_${Date.now()}.csv`);
-        document.body.appendChild(link); link.click();
+        link.href     = url;
+        link.download = `hiremind_export_${Date.now()}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        // FIX: clean up — removeChild was missing, leaking DOM nodes on every export
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     const handleStatusChange = (candidateId, newStatus) =>
@@ -521,11 +541,16 @@ const ResumeAnalyzer = ({ user }) => {
                     (r.missingSkills || []).join('; '),
                     r.candidateStatus
                 ]);
-                const csv = 'data:text/csv;charset=utf-8,' + headers.join(',') + '\n' + rows.map(r => r.join(',')).join('\n');
+                const csvContent = [headers, ...rows].map(row => row.map(escapeCSV).join(',')).join('\n');
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url  = URL.createObjectURL(blob);
                 const link = document.createElement('a');
-                link.setAttribute('href', encodeURI(csv));
-                link.setAttribute('download', `hiremind_shortlisted_${Date.now()}.csv`);
-                document.body.appendChild(link); link.click(); document.body.removeChild(link);
+                link.href     = url;
+                link.download = `hiremind_shortlisted_${Date.now()}.csv`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
             }} className={`border p-6 sm:p-8 rounded-2xl text-center transition-colors group relative overflow-hidden ${analysisResults.length > 0 ? `cursor-pointer ${isDark ? 'border-indigo-500/30 bg-slate-800/40 hover:bg-slate-800' : 'border-indigo-200 bg-white hover:bg-indigo-50 shadow-sm'}` : `opacity-50 cursor-not-allowed ${isDark ? 'border-slate-800 bg-slate-800/40' : 'border-gray-100 bg-white'}`}`}>
                 <Target className={`w-10 h-10 sm:w-12 sm:h-12 mx-auto mb-3 sm:mb-4 ${analysisResults.length > 0 ? 'text-indigo-400 group-hover:scale-110 transition-transform' : muted}`} />
                 <h4 className={`font-bold mb-1 sm:mb-2 text-sm sm:text-base ${heading}`}>Export Shortlisted</h4>

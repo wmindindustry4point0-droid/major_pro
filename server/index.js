@@ -27,7 +27,10 @@ app.use(cors({
 }));
 
 app.use(express.json());
-app.use('/uploads', express.static('uploads'));
+
+// FIX #10: Removed `app.use('/uploads', express.static('uploads'))`.
+// All file uploads go to S3 — this local static route was dead code and
+// misleading (it implied files were served locally, which they are not).
 
 app.use(session({
     secret: process.env.SESSION_SECRET,
@@ -48,20 +51,26 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/resume-sc
     .then(() => console.log('MongoDB connected'))
     .catch(err => console.error('MongoDB connection error:', err));
 
-// NEW: Register StageHistory before routes load
+// Register models before routes load
 require('./models/StageHistory');
+require('./models/Interview');
+require('./models/VideoInterview');
 
-const authRoutes         = require('./routes/authRoutes');
-const jobRoutes          = require('./routes/jobRoutes');
-const appRoutes          = require('./routes/appRoutes');
-const candidateRoutes    = require('./routes/candidateRoutes');
-const notificationRoutes = require('./routes/notificationRoutes');
+const authRoutes           = require('./routes/authRoutes');
+const jobRoutes            = require('./routes/jobRoutes');
+const appRoutes            = require('./routes/appRoutes');
+const candidateRoutes      = require('./routes/candidateRoutes');
+const notificationRoutes   = require('./routes/notificationRoutes');
+const interviewRoutes      = require('./routes/interviewRoutes');
+const videoInterviewRoutes = require('./routes/videoInterviewRoutes');
 
-app.use('/api/auth',          authRoutes);
-app.use('/api/jobs',          jobRoutes);
-app.use('/api/applications',  appRoutes);
-app.use('/api/candidate',     candidateRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/auth',            authRoutes);
+app.use('/api/jobs',            jobRoutes);
+app.use('/api/applications',    appRoutes);
+app.use('/api/candidate',       candidateRoutes);
+app.use('/api/notifications',   notificationRoutes);
+app.use('/api/interviews',      interviewRoutes);
+app.use('/api/video-interviews',videoInterviewRoutes);
 
 app.get('/', (req, res) => res.send('API is running...'));
 

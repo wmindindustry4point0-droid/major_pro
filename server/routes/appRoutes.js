@@ -14,6 +14,13 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 const preFilter   = require('../lib/preFilter');
 
+// FIX: Forward the internal secret on every AI service call so the
+// secured endpoints accept the request. If AI_INTERNAL_SECRET is not set,
+// the header is simply omitted (dev/local mode stays compatible).
+const AI_HEADERS = process.env.AI_INTERNAL_SECRET
+    ? { 'X-Internal-Secret': process.env.AI_INTERNAL_SECRET }
+    : {};
+
 const VALID_TRANSITIONS = {
     applied:     ['screened', 'rejected'],
     screened:    ['shortlisted', 'rejected'],
@@ -126,7 +133,7 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
                     jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
                     resume_embedding:    existingEmbedding
                 },
-                { timeout: 90000 }
+                { timeout: 90000, headers: AI_HEADERS }
             );
             aiData = aiResponse.data;
         } catch (aiErr) {
@@ -151,16 +158,17 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
                 application.rejectedAt   = new Date();
                 application.finalScore   = 0;
                 application.matchScore   = 0;
-                application.weaknesses   = [filterResult.reason];
-                application.aiFeedback   = `Pre-screened: ${filterResult.reason}`;
+                application.skillsMissing  = filterResult.missingSkills || [];
+                application.skillsMatched  = filterResult.matchedSkills || [];
+                application.weaknesses     = [filterResult.reason];
+                application.aiFeedback     = `Pre-screened: ${filterResult.reason}`;
                 await application.save();
 
-                // Bug #15 fix: changedBy should be null/system marker, not candidateId
                 await StageHistory.create({
                     applicationId,
                     fromStatus: 'applied',
                     toStatus: 'rejected',
-                    changedBy: null, // system-initiated rejection, not the candidate
+                    changedBy: null,
                     note: `Auto-rejected by system: ${filterResult.reason}`
                 });
 
@@ -203,12 +211,11 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
             ).catch(console.error);
         }
 
-        // Bug #15 fix: changedBy is system (null), not the candidate
         await StageHistory.create({
             applicationId,
             fromStatus: 'applied',
             toStatus: 'screened',
-            changedBy: null, // system AI screened, not the candidate
+            changedBy: null,
             note: `AI scored: ${application.finalScore?.toFixed(1)}%`
         });
 
@@ -227,10 +234,9 @@ async function runAIAnalysis(applicationId, s3Key, job, candidateId) {
     }
 }
 
-// ── Get Applications for a Job (Bug #7 fix — ownership check) ────────────────
+// ── Get Applications for a Job (ownership check) ─────────────────────────────
 router.get('/job/:jobId', requireAuth, requireRole('company'), async (req, res) => {
     try {
-        // Verify the job belongs to the requesting recruiter
         const job = await Job.findById(req.params.jobId);
         if (!job) return res.status(404).json({ error: 'Job not found.' });
         if (job.companyId.toString() !== req.user._id.toString())
@@ -277,7 +283,7 @@ router.get('/job/:jobId', requireAuth, requireRole('company'), async (req, res) 
     }
 });
 
-// ── Get score breakdown + history (Bug #8 fix — ownership check) ──────────────
+// ── Get score breakdown + history (ownership check) ───────────────────────────
 router.get('/:id/breakdown', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const application = await Application.findById(req.params.id)
@@ -285,7 +291,6 @@ router.get('/:id/breakdown', requireAuth, requireRole('company'), async (req, re
             .populate('jobId', 'title mustHaveSkills niceToHaveSkills companyId');
         if (!application) return res.status(404).json({ error: 'Application not found' });
 
-        // Verify the job belongs to the requesting recruiter
         if (application.jobId.companyId.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied. This application does not belong to your account.' });
 
@@ -300,7 +305,7 @@ router.get('/:id/breakdown', requireAuth, requireRole('company'), async (req, re
     }
 });
 
-// ── Get Applications for a Candidate ────────────────────────────────────────
+// ── Get Applications for a Candidate ─────────────────────────────────────────
 router.get('/candidate/:candidateId', requireAuth, requireRole('candidate'), async (req, res) => {
     if (req.user._id.toString() !== req.params.candidateId)
         return res.status(403).json({ error: 'Access denied.' });
@@ -325,22 +330,21 @@ router.get('/candidate/:candidateId', requireAuth, requireRole('candidate'), asy
     }
 });
 
-// ── Re-Analyze (Bug #14 fix — always use the application's own resume) ────────
+// ── Re-Analyze ────────────────────────────────────────────────────────────────
 router.post('/analyze/:applicationId', requireAuth, requireRole('company'), async (req, res) => {
     try {
-        const application = await Application.findById(req.params.applicationId).populate('jobId');
+        const application = await Application.findById(req.params.applicationId)
+            .populate('jobId')
+            .populate('candidateId', 'name email');
         if (!application) return res.status(404).json({ error: 'Application not found' });
 
-        // Bug #8 fix: ownership check on re-analyze too
         const job = application.jobId;
         if (job.companyId.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied.' });
 
-        const profile = await CandidateProfile.findOne({ userId: application.candidateId });
+        const profile = await CandidateProfile.findOne({ userId: application.candidateId._id });
         const existingEmbedding = (profile && profile.embeddingVector && profile.embeddingVector.length > 0) ? profile.embeddingVector : null;
 
-        // Bug #14 fix: Always use the resume the candidate submitted WITH this application,
-        // not their latest profile resume. Re-analysis should reflect the original submission.
         const resumeKey = application.resumePath;
         if (!resumeKey) return res.status(400).json({ error: 'No resume found for this application.' });
         const signedUrl = await getS3SignedUrl(resumeKey, 900);
@@ -358,7 +362,7 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
                 jd_embedding:        (job.jdEmbeddingVector && job.jdEmbeddingVector.length > 0) ? job.jdEmbeddingVector : null,
                 resume_embedding:    existingEmbedding
             },
-            { timeout: 90000 }
+            { timeout: 90000, headers: AI_HEADERS }
         );
 
         const aiData = response.data;
@@ -382,13 +386,13 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
         }
         if (profile && aiData.resumeEmbedding && profile.embeddingVector.length === 0) {
             CandidateProfile.findOneAndUpdate(
-                { userId: application.candidateId },
+                { userId: application.candidateId._id },
                 { embeddingVector: aiData.resumeEmbedding, embeddingHash: aiData.resumeEmbeddingHash }
             ).catch(console.error);
         }
 
         Notification.create({
-            userId: application.candidateId,
+            userId: application.candidateId._id,
             type: 'status_analyzed',
             title: 'Resume Re-analyzed',
             message: `Your resume for "${job.title}" was re-analyzed. Score: ${application.finalScore?.toFixed(0)}%`
@@ -401,7 +405,7 @@ router.post('/analyze/:applicationId', requireAuth, requireRole('company'), asyn
     }
 });
 
-// ── Update Status (Bug #6 fix — ownership check on notes too) ────────────────
+// ── Update Status ─────────────────────────────────────────────────────────────
 router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const { status, note, rejectionReason } = req.body;
@@ -416,7 +420,6 @@ router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res
 
         if (!application) return res.status(404).json({ error: 'Application not found.' });
 
-        // Ownership check
         if (application.jobId.companyId._id.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied.' });
 
@@ -476,7 +479,7 @@ router.patch('/:id/status', requireAuth, requireRole('company'), async (req, res
     }
 });
 
-// ── Save Recruiter Notes (Bug #6 fix — ownership check) ──────────────────────
+// ── Save Recruiter Notes (ownership check) ────────────────────────────────────
 router.patch('/:id/notes', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const { recruiterNotes } = req.body;
@@ -487,7 +490,6 @@ router.patch('/:id/notes', requireAuth, requireRole('company'), async (req, res)
         });
         if (!application) return res.status(404).json({ error: 'Application not found.' });
 
-        // Bug #6 fix: verify the job belongs to the requesting recruiter
         if (application.jobId.companyId.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied. You do not own this application.' });
 

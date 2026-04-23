@@ -3,16 +3,16 @@ import { Link, useNavigate } from 'react-router-dom';
 import { BrainCircuit } from 'lucide-react';
 import ThemeToggle from './ThemeToggle';
 import { useTheme } from '../context/ThemeContext';
+import { getUser, clearAuth } from '../utils/auth';
 
 const Navbar = () => {
     const navigate = useNavigate();
     const { theme } = useTheme();
     const isDark = theme === 'dark';
-    const user = (() => { try { return JSON.parse(localStorage.getItem('user')); } catch { return null; } })();
+    const user = getUser();
 
     const handleLogout = () => {
-        localStorage.removeItem('user');
-        localStorage.removeItem('token');
+        clearAuth();
         navigate('/login');
     };
 

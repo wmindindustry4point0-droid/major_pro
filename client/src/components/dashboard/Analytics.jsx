@@ -237,9 +237,44 @@ const Analytics = ({ user }) => {
     const head   = isDark ? 'text-white'                      : 'text-slate-900';
 
     if (loading) return (
-        <div className="flex flex-col items-center justify-center mt-24 gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-indigo-400" />
-            <p className={`text-sm animate-pulse ${sub}`}>Loading analytics…</p>
+        <div className="space-y-8 pb-14 animate-pulse">
+            {/* Header skeleton */}
+            <div>
+                <div className={`h-8 w-36 rounded-xl mb-2 ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+                <div className={`h-4 w-64 rounded-lg ${isDark ? 'bg-slate-800/70' : 'bg-slate-100'}`} />
+            </div>
+            {/* Stat cards skeleton */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                {[...Array(4)].map((_, i) => (
+                    <div key={i} className={`rounded-2xl border p-5 space-y-3 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                        <div className={`w-10 h-10 rounded-xl ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`} />
+                        <div className={`h-8 w-16 rounded-lg ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+                        <div className={`h-3 w-24 rounded ${isDark ? 'bg-slate-800/70' : 'bg-slate-100'}`} />
+                    </div>
+                ))}
+            </div>
+            {/* Charts skeleton */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {[...Array(2)].map((_, i) => (
+                    <div key={i} className={`rounded-2xl border p-6 space-y-4 ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                        <div className={`h-5 w-32 rounded-lg ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} />
+                        <div className="flex items-end gap-3 h-32">
+                            {[40, 70, 55, 90, 45, 80, 60, 35].map((h, j) => (
+                                <div key={j} className={`flex-1 rounded-t-md ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`} style={{ height: `${h}%` }} />
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {/* Table skeleton */}
+            <div className={`rounded-2xl border overflow-hidden ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+                <div className="p-6 pb-0"><div className={`h-5 w-40 rounded-lg ${isDark ? 'bg-slate-800' : 'bg-slate-200'}`} /></div>
+                <div className="p-4 space-y-3 mt-4">
+                    {[...Array(4)].map((_, i) => (
+                        <div key={i} className={`h-12 rounded-xl ${isDark ? 'bg-slate-800/50' : 'bg-slate-50'}`} />
+                    ))}
+                </div>
+            </div>
         </div>
     );
 

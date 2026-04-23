@@ -12,6 +12,12 @@ const { requireAuth, requireRole } = require('../middleware/auth');
 const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 const { DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
+// FIX: Forward the internal secret on every AI service call so the
+// secured endpoints accept the request.
+const AI_HEADERS = process.env.AI_INTERNAL_SECRET
+    ? { 'X-Internal-Secret': process.env.AI_INTERNAL_SECRET }
+    : {};
+
 async function deleteS3Object(key) {
     try { await s3.send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key })); }
     catch (err) { console.error('S3 delete failed (non-fatal):', key, err.message); }
@@ -67,7 +73,7 @@ router.post('/', requireAuth, requireRole('company'), async (req, res) => {
                 const aiRes = await axios.post(
                     `${process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001'}/embed_jd`,
                     { job_description: description },
-                    { timeout: 30000 }
+                    { timeout: 30000, headers: AI_HEADERS }
                 );
                 if (aiRes.data.embedding) {
                     await Job.findByIdAndUpdate(job._id, { jdEmbeddingVector: aiRes.data.embedding });
@@ -102,7 +108,7 @@ router.get('/', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Delete Job (Bug #2 fix — cascading delete of applications + StageHistory) ─
+// ── Delete Job (cascading delete of applications + StageHistory) ─────────────
 router.delete('/:id', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const Application  = require('../models/Application');
@@ -113,16 +119,13 @@ router.delete('/:id', requireAuth, requireRole('company'), async (req, res) => {
         if (job.companyId.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied.' });
 
-        // Bug #13 fix: Notify applicants their application is being removed
         const apps = await Application.find({ jobId: req.params.id }, '_id candidateId');
         if (apps.length > 0) {
             const appIds = apps.map(a => a._id);
             const candidateIds = apps.map(a => a.candidateId);
 
-            // Delete stage history for all applications under this job
             await StageHistory.deleteMany({ applicationId: { $in: appIds } });
 
-            // Notify candidates their application was removed (Bug #13)
             const notifs = candidateIds.map(cid => ({
                 userId: cid,
                 type: 'job_deleted',
@@ -131,7 +134,6 @@ router.delete('/:id', requireAuth, requireRole('company'), async (req, res) => {
             }));
             Notification.insertMany(notifs, { ordered: false }).catch(e => console.error('Notify error:', e.message));
 
-            // Delete all applications for this job
             await Application.deleteMany({ jobId: req.params.id });
         }
 
@@ -158,7 +160,7 @@ router.post('/analyze-fit', requireAuth, requireRole('candidate'), upload.single
                     required_skills:     parseSkills(requiredSkills),
                     min_experience:      Number(minExperience) || 0
                 },
-                { timeout: 60000 }
+                { timeout: 60000, headers: AI_HEADERS }
             );
             res.json(response.data);
         } catch (aiError) {
@@ -197,7 +199,7 @@ router.post('/analyze-workspace', requireAuth, requireRole('company'), upload.ar
                     required_skills:     parseSkills(requiredSkills),
                     min_experience:      Number(minExperience) || 0
                 },
-                { timeout: 300000 }
+                { timeout: 300000, headers: AI_HEADERS }
             );
             res.json(response.data);
         } catch (aiError) {
@@ -229,7 +231,6 @@ router.get('/workspaces/:companyId', requireAuth, requireRole('company'), async 
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Bug #9 fix: Strip companyId from req.body to prevent ownership hijacking
 router.put('/workspaces/:id', requireAuth, requireRole('company'), async (req, res) => {
     try {
         const workspace = await AIWorkspace.findById(req.params.id);
@@ -237,14 +238,12 @@ router.put('/workspaces/:id', requireAuth, requireRole('company'), async (req, r
         if (workspace.companyId.toString() !== req.user._id.toString())
             return res.status(403).json({ error: 'Access denied.' });
 
-        // Explicitly whitelist allowed fields — never pass raw req.body
         const { name, jobTitle, jobDescription, analysisResults, results, requiredSkills, mustHaveSkills, niceToHaveSkills, minExperience, skillsInput, status } = req.body;
         const safeUpdate = {};
         if (name             !== undefined) safeUpdate.name             = name;
         if (jobTitle         !== undefined) safeUpdate.jobTitle         = jobTitle;
         if (jobDescription   !== undefined) safeUpdate.jobDescription   = jobDescription;
         if (skillsInput      !== undefined) safeUpdate.skillsInput      = skillsInput;
-        // Accept both 'analysisResults' (frontend) and 'results' (legacy)
         if (analysisResults  !== undefined) safeUpdate.analysisResults  = analysisResults;
         if (results          !== undefined) safeUpdate.analysisResults  = results;
         if (status           !== undefined) safeUpdate.status           = status;

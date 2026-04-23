@@ -44,4 +44,26 @@ router.patch('/:id/read', requireAuth, async (req, res) => {
     }
 });
 
+// FIX #13: DELETE /api/notifications/clear — let users manually clear all their notifications
+// Without this, read notifications accumulate until the 30-day TTL index purges them.
+router.delete('/clear', requireAuth, async (req, res) => {
+    try {
+        await Notification.deleteMany({ userId: req.user._id });
+        res.json({ message: 'All notifications cleared.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// DELETE /api/notifications/:id — delete a single notification
+router.delete('/:id', requireAuth, async (req, res) => {
+    try {
+        const n = await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user._id });
+        if (!n) return res.status(404).json({ error: 'Not found.' });
+        res.json({ message: 'Notification deleted.' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 module.exports = router;

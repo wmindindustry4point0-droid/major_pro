@@ -12,6 +12,12 @@ const { s3, BUCKET_NAME, getS3SignedUrl } = require('../lib/s3');
 
 const AI_SERVICE = process.env.AI_SERVICE_URL || 'http://127.0.0.1:5001';
 
+// FIX: Forward the internal secret on every AI service call so the
+// secured endpoints accept the request.
+const AI_HEADERS = process.env.AI_INTERNAL_SECRET
+    ? { 'X-Internal-Secret': process.env.AI_INTERNAL_SECRET }
+    : {};
+
 const upload = multer({
     storage: multerS3({
         s3,
@@ -82,13 +88,21 @@ router.post('/profile', requireAuth, requireRole('candidate'), upload.single('re
         // Try structured parse_resume first, fall back to extract_resume
         let aiData;
         try {
-            const aiResponse = await axios.post(`${AI_SERVICE}/parse_resume`, { resume_path: signedUrl }, { timeout: 90000 });
+            const aiResponse = await axios.post(
+                `${AI_SERVICE}/parse_resume`,
+                { resume_path: signedUrl },
+                { timeout: 90000, headers: AI_HEADERS }
+            );
             aiData = aiResponse.data;
             if (aiData.error) throw new Error(aiData.error);
         } catch (aiErr) {
             console.error('parse_resume failed, using fallback:', aiErr.message);
             try {
-                const fallback = await axios.post(`${AI_SERVICE}/extract_resume`, { resume_path: signedUrl }, { timeout: 60000 });
+                const fallback = await axios.post(
+                    `${AI_SERVICE}/extract_resume`,
+                    { resume_path: signedUrl },
+                    { timeout: 60000, headers: AI_HEADERS }
+                );
                 aiData = {
                     candidateName: fallback.data.candidateName,
                     email:         fallback.data.email,

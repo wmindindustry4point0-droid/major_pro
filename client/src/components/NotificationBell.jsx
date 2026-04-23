@@ -1,22 +1,30 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
-import { Bell, CheckCheck, Briefcase, Star, XCircle, BrainCircuit, Megaphone } from 'lucide-react';
+import { Bell, CheckCheck, Briefcase, Star, XCircle, BrainCircuit, Megaphone, Calendar, Trash2 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
-// FIX: Increased from 30s to 60s to reduce wake-ups on Render free tier,
-// which spins down after 15 min of inactivity. 60s is still responsive enough
-// for notifications without hammering the server.
+// Reduced polling interval — 60s is a good balance between responsiveness and server load
 const POLL_INTERVAL = 60_000;
 
+// FIX #4: Added missing notification types that were not in the typeConfig map.
+// job_deleted and status_interview were fired by the backend but rendered as blank tiles.
 const typeConfig = {
-    application_received: { icon: Briefcase, color: 'text-indigo-400',  bg: 'bg-indigo-500/10'  },
-    status_shortlisted:   { icon: Star,      color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
-    status_rejected:      { icon: XCircle,   color: 'text-rose-400',    bg: 'bg-rose-500/10'    },
-    status_analyzed:      { icon: BrainCircuit, color: 'text-purple-400', bg: 'bg-purple-500/10' },
-    job_posted:           { icon: Megaphone, color: 'text-amber-400',   bg: 'bg-amber-500/10'   }
+    application_received:   { icon: Briefcase,    color: 'text-indigo-400',  bg: 'bg-indigo-500/10'  },
+    status_shortlisted:     { icon: Star,          color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    status_rejected:        { icon: XCircle,       color: 'text-rose-400',    bg: 'bg-rose-500/10'    },
+    status_analyzed:        { icon: BrainCircuit,  color: 'text-purple-400',  bg: 'bg-purple-500/10'  },
+    status_selected:        { icon: Star,          color: 'text-yellow-400',  bg: 'bg-yellow-500/10'  },
+    job_posted:             { icon: Megaphone,     color: 'text-amber-400',   bg: 'bg-amber-500/10'   },
+    job_deleted:            { icon: XCircle,       color: 'text-rose-400',    bg: 'bg-rose-500/10'    }, // FIX #4
+    status_interview:       { icon: Calendar,      color: 'text-blue-400',    bg: 'bg-blue-500/10'    }, // FIX #4
+    interview_scheduled:    { icon: Calendar,      color: 'text-blue-400',    bg: 'bg-blue-500/10'    },
+    video_interview_assigned:{ icon: BrainCircuit, color: 'text-violet-400',  bg: 'bg-violet-500/10'  },
 };
+
+// Fallback config for any unknown type that might appear
+const DEFAULT_CONFIG = { icon: Bell, color: 'text-slate-400', bg: 'bg-slate-500/10' };
 
 const timeAgo = (dateStr) => {
     const diff  = Date.now() - new Date(dateStr).getTime();
@@ -37,8 +45,6 @@ const NotificationBell = () => {
     const [open, setOpen] = useState(false);
     const dropdownRef = useRef(null);
 
-    // FIX: All API calls now include the JWT Authorization header.
-    // Without it, requireAuth middleware returns 401 and notifications never load.
     const getAuthHeader = () => {
         const token = localStorage.getItem('token');
         return token ? { Authorization: `Bearer ${token}` } : {};
@@ -52,7 +58,6 @@ const NotificationBell = () => {
             setNotifications(res.data.notifications);
             setUnreadCount(res.data.unreadCount);
         } catch (err) {
-            // Silently ignore 401s (user may have logged out)
             if (err.response?.status !== 401) {
                 console.error('Failed to fetch notifications:', err.message);
             }
@@ -99,106 +104,103 @@ const NotificationBell = () => {
         }
     };
 
-    const dropBg    = isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl';
-    const headerBg  = isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200';
-    const itemHover = isDark ? 'hover:bg-slate-800/60' : 'hover:bg-slate-50';
-    const unreadBg  = isDark ? 'bg-indigo-500/5' : 'bg-indigo-50/60';
-    const dividerCol = isDark ? 'border-slate-800' : 'border-slate-100';
-    const titleCol  = isDark ? 'text-white' : 'text-slate-900';
-    const subCol    = isDark ? 'text-slate-400' : 'text-slate-500';
-    const timeCol   = isDark ? 'text-slate-500' : 'text-slate-400';
-    const emptyCol  = isDark ? 'text-slate-500' : 'text-slate-400';
+    // FIX #13 (frontend): Call the new DELETE /clear endpoint to let users clear notifications
+    const clearAll = async () => {
+        try {
+            await axios.delete(`${API}/api/notifications/clear`, {
+                headers: getAuthHeader()
+            });
+            setNotifications([]);
+            setUnreadCount(0);
+        } catch (err) {
+            console.error('Failed to clear notifications:', err.message);
+        }
+    };
+
+    const bg      = isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200';
+    const itemBg  = isDark ? 'hover:bg-slate-800'            : 'hover:bg-slate-50';
+    const unreadBg= isDark ? 'bg-slate-800/60'               : 'bg-indigo-50/50';
+    const textCol = isDark ? 'text-slate-200'                : 'text-slate-800';
+    const subCol  = isDark ? 'text-slate-400'                : 'text-slate-500';
 
     return (
         <div className="relative" ref={dropdownRef}>
-            {/* Bell button */}
             <button
-                onClick={() => setOpen(prev => !prev)}
-                className={`relative p-2 rounded-lg transition-colors ${
-                    isDark
-                        ? 'text-slate-400 hover:text-white hover:bg-slate-800'
-                        : 'text-slate-400 hover:text-slate-700 hover:bg-slate-100'
-                }`}
+                onClick={() => { setOpen(prev => !prev); if (!open) fetchNotifications(); }}
+                className={`relative p-2 rounded-xl transition-colors ${isDark ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}
+                aria-label="Notifications"
             >
-                <Bell className="w-4 h-4 sm:w-5 sm:h-5" />
+                <Bell className={`w-5 h-5 ${isDark ? 'text-slate-300' : 'text-slate-600'}`} />
                 {unreadCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] flex items-center justify-center bg-indigo-500 text-white text-[10px] font-bold rounded-full px-1 border-2 border-slate-900">
-                        {unreadCount > 99 ? '99+' : unreadCount}
+                    <span className="absolute -top-1 -right-1 w-4 h-4 bg-indigo-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                        {unreadCount > 9 ? '9+' : unreadCount}
                     </span>
                 )}
             </button>
 
-            {/* Dropdown */}
             {open && (
-                <div className={`
-                    fixed sm:absolute
-                    top-16 sm:top-full
-                    left-1/2 sm:left-auto
-                    -translate-x-1/2 sm:translate-x-0
-                    sm:right-0
-                    w-[92vw] sm:w-80 md:w-96
-                    max-h-[450px]
-                    border rounded-2xl overflow-hidden
-                    z-[9999]
-                    ${dropBg}
-                `}>
+                <div className={`absolute right-0 mt-2 w-80 sm:w-96 rounded-2xl border shadow-2xl z-50 overflow-hidden ${bg}`}>
                     {/* Header */}
-                    <div className={`flex items-center justify-between px-4 py-3 border-b ${headerBg}`}>
-                        <div className="flex items-center gap-2">
-                            <Bell className={`w-4 h-4 ${isDark ? 'text-indigo-400' : 'text-indigo-500'}`} />
-                            <span className={`font-bold text-sm ${titleCol}`}>Notifications</span>
-                            {unreadCount > 0 && (
-                                <span className="bg-indigo-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                                    {unreadCount}
-                                </span>
+                    <div className={`flex items-center justify-between px-4 py-3 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                        <span className={`font-semibold text-sm ${textCol}`}>
+                            Notifications {unreadCount > 0 && <span className="text-indigo-400">({unreadCount})</span>}
+                        </span>
+                        <div className="flex gap-2">
+                            {notifications.length > 0 && (
+                                <>
+                                    {unreadCount > 0 && (
+                                        <button
+                                            onClick={markAllRead}
+                                            className="flex items-center gap-1 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                                            title="Mark all as read"
+                                        >
+                                            <CheckCheck className="w-3.5 h-3.5" /> Read all
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={clearAll}
+                                        className="flex items-center gap-1 text-xs text-rose-400 hover:text-rose-300 transition-colors"
+                                        title="Clear all notifications"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" /> Clear
+                                    </button>
+                                </>
                             )}
                         </div>
-                        {unreadCount > 0 && (
-                            <button
-                                onClick={markAllRead}
-                                className={`flex items-center gap-1 text-xs font-medium transition-colors ${
-                                    isDark ? 'text-indigo-400 hover:text-indigo-300' : 'text-indigo-600 hover:text-indigo-700'
-                                }`}
-                            >
-                                <CheckCheck className="w-3.5 h-3.5" />
-                                Mark all read
-                            </button>
-                        )}
                     </div>
 
                     {/* List */}
-                    <div className="max-h-[420px] overflow-y-auto custom-scrollbar">
+                    <div className="max-h-[420px] overflow-y-auto">
                         {notifications.length === 0 ? (
-                            <div className={`text-center py-12 text-sm ${emptyCol}`}>
-                                <Bell className="w-8 h-8 mx-auto mb-3 opacity-30" />
+                            <div className={`px-4 py-10 text-center text-sm ${subCol}`}>
+                                <Bell className="w-8 h-8 mx-auto mb-2 opacity-30" />
                                 No notifications yet
                             </div>
                         ) : (
-                            <div className={`divide-y ${dividerCol}`}>
-                                {notifications.map((n) => {
-                                    const cfg  = typeConfig[n.type] || typeConfig.job_posted;
-                                    const Icon = cfg.icon;
-                                    return (
-                                        <div
-                                            key={n._id}
-                                            onClick={() => !n.isRead && markOneRead(n._id)}
-                                            className={`flex gap-3 px-4 py-3 cursor-pointer transition-colors ${itemHover} ${!n.isRead ? unreadBg : ''}`}
-                                        >
-                                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${cfg.bg}`}>
-                                                <Icon className={`w-4 h-4 ${cfg.color}`} />
-                                            </div>
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <p className={`text-xs font-bold leading-tight ${titleCol}`}>{n.title}</p>
-                                                    {!n.isRead && <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0 mt-1" />}
-                                                </div>
-                                                <p className={`text-xs mt-0.5 leading-relaxed ${subCol}`}>{n.message}</p>
-                                                <p className={`text-[11px] mt-1 ${timeCol}`}>{timeAgo(n.createdAt)}</p>
-                                            </div>
+                            notifications.map(n => {
+                                // FIX #4: fall back to DEFAULT_CONFIG for unknown types
+                                const cfg = typeConfig[n.type] || DEFAULT_CONFIG;
+                                const Icon = cfg.icon;
+                                return (
+                                    <div
+                                        key={n._id}
+                                        onClick={() => !n.isRead && markOneRead(n._id)}
+                                        className={`flex gap-3 px-4 py-3 cursor-pointer transition-colors ${itemBg} ${!n.isRead ? unreadBg : ''}`}
+                                    >
+                                        <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center mt-0.5 ${cfg.bg}`}>
+                                            <Icon className={`w-4 h-4 ${cfg.color}`} />
                                         </div>
-                                    );
-                                })}
-                            </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className={`text-xs font-semibold leading-tight ${textCol}`}>{n.title}</p>
+                                            <p className={`text-xs mt-0.5 leading-snug ${subCol}`}>{n.message}</p>
+                                            <p className={`text-[11px] mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{timeAgo(n.createdAt)}</p>
+                                        </div>
+                                        {!n.isRead && (
+                                            <div className="shrink-0 w-2 h-2 rounded-full bg-indigo-500 mt-2" />
+                                        )}
+                                    </div>
+                                );
+                            })
                         )}
                     </div>
                 </div>

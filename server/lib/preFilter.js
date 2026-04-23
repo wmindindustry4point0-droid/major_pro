@@ -1,37 +1,81 @@
-// preFilter checks whether a candidate meets the hard minimum requirements for a job.
-// It accepts either a CandidateProfile document OR a plain object with the same shape,
-// which lets callers pass freshly AI-extracted skills instead of stale cached profile data.
+// preFilter checks whether a candidate meets hard minimum requirements for a job.
+// v3: synonym-aware matching — "JS" matches "JavaScript", "k8s" matches "Kubernetes", etc.
 //
-// mustHaveThreshold: fraction of must-have skills the candidate must match (default 1.0 = 100%).
-// Set to a lower value (e.g. 0.8) for roles where some flexibility is acceptable.
-function preFilter(profile, job, { mustHaveThreshold = 1.0 } = {}) {
-    const mustHave = job.mustHaveSkills || [];
-    const minExp   = job.minExperience  || 0;
+// FIX #11: mustHaveThreshold default changed from 1.0 (100%) to 0.8 (80%).
+// A threshold of 1.0 auto-rejects candidates missing even a single skill out of 10,
+// which is too strict for real-world hiring. 0.8 allows up to 20% skill gap.
 
-    if (mustHave.length === 0) return { pass: true };
+// How much experience slack to allow — candidate needs at least this fraction of minExp.
+// e.g. 0.7 means a 3-year minimum will pass a 2.1-year candidate.
+const EXPERIENCE_SLACK = 0.7;
 
-    const candidateSkills = (profile.extractedSkills || []).map(s => s.toLowerCase().trim());
+// Canonical synonym map — add more pairs as needed
+const SYNONYMS = {
+  'js':           'javascript',
+  'reactjs':      'react',
+  'react.js':     'react',
+  'vue.js':       'vue',
+  'node':         'node.js',
+  'nodejs':       'node.js',
+  'postgres':     'postgresql',
+  'k8s':          'kubernetes',
+  'ml':           'machine learning',
+  'ai':           'artificial intelligence',
+  'dl':           'deep learning',
+  'ts':           'typescript',
+  'mongo':        'mongodb',
+  'py':           'python',
+  'gcp':          'google cloud',
+  'aws':          'amazon web services',
+  'tf':           'tensorflow',
+  'springboot':   'spring boot',
+  'spring-boot':  'spring boot',
+  'nextjs':       'next.js',
+  'nuxtjs':       'nuxt',
+  'sveltejs':     'svelte',
+  'scss':         'sass',
+  'ci/cd':        'cicd',
+  'cicd':         'ci/cd',
+};
 
-    const mustMatches = mustHave.filter(s => candidateSkills.includes(s.toLowerCase().trim()));
-    const skillRatio  = mustMatches.length / mustHave.length;
+function normalize(skill) {
+  const s = skill.toLowerCase().trim();
+  return SYNONYMS[s] || s;
+}
 
-    if (skillRatio < mustHaveThreshold) {
-        const missing = mustHave.filter(s => !candidateSkills.includes(s.toLowerCase().trim()));
-        return {
-            pass: false,
-            reason: `Missing ${missing.length} of ${mustHave.length} required skills: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '...' : ''}`
-        };
-    }
+function preFilter(profile, job, { mustHaveThreshold = 0.8 } = {}) {
+  const mustHave = job.mustHaveSkills || [];
+  const minExp   = job.minExperience  || 0;
 
-    const candidateExp = profile.totalExperienceYears || 0;
-    if (minExp > 0 && candidateExp < minExp * 0.7) {
-        return {
-            pass: false,
-            reason: `Insufficient experience: ${candidateExp.toFixed(1)} years (minimum ${minExp} years required)`
-        };
-    }
+  if (mustHave.length === 0) return { pass: true };
 
-    return { pass: true };
+  // Normalize candidate skills through synonym map
+  const candidateSkills = (profile.extractedSkills || []).map(normalize);
+
+  // Normalize job's must-have skills too so both sides are canonical
+  const mustMatches = mustHave.filter(s => candidateSkills.includes(normalize(s)));
+  const skillRatio  = mustMatches.length / mustHave.length;
+
+  if (skillRatio < mustHaveThreshold) {
+    const missing = mustHave.filter(s => !candidateSkills.includes(normalize(s)));
+    return {
+      pass: false,
+      missingSkills: missing,   // full array so callers can store it
+      matchedSkills: mustMatches.map(s => mustHave.find(m => normalize(m) === normalize(s)) || s),
+      reason: `Missing ${missing.length} of ${mustHave.length} required skills: ${missing.slice(0, 3).join(', ')}${missing.length > 3 ? '...' : ''}`
+    };
+  }
+
+  const candidateExp = profile.totalExperienceYears || 0;
+  // EXPERIENCE_SLACK: candidate needs at least (minExp * EXPERIENCE_SLACK) years
+  if (minExp > 0 && candidateExp < minExp * EXPERIENCE_SLACK) {
+    return {
+      pass: false,
+      reason: `Insufficient experience: ${candidateExp.toFixed(1)} years (minimum ${minExp} years required)`
+    };
+  }
+
+  return { pass: true };
 }
 
 module.exports = preFilter;

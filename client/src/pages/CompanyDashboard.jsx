@@ -2,12 +2,14 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     LayoutDashboard, PlusSquare, BrainCircuit,
-    Settings as SettingsIcon, // ✅ FIXED HERE
-    BarChart3, LogOut, ChevronRight, Menu, X,
+    Settings as SettingsIcon,
+    BarChart3, LogOut, ChevronRight, Menu, X, Calendar,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+// FIX #20: Use shared safe auth utilities
+import { getUser, clearAuth } from '../utils/auth';
 
-import Overview from '../components/dashboard/Overview';
+import { CompanyOverview as Overview } from '../components/dashboard/Overview';
 import JobManagement from '../components/dashboard/JobManagement';
 import ResumeAnalyzer from '../components/dashboard/ResumeAnalyzer';
 import Analytics from '../components/dashboard/Analytics';
@@ -15,6 +17,7 @@ import Settings from '../components/dashboard/Settings';
 import ThemeToggle from '../components/ThemeToggle';
 import NotificationBell from '../components/NotificationBell';
 import { useTheme } from '../context/ThemeContext';
+import InterviewScheduler from '../components/dashboard/InterviewScheduler';
 
 const CompanyDashboard = () => {
     const [activeView,  setActiveView]  = useState('overview');
@@ -22,12 +25,11 @@ const CompanyDashboard = () => {
     const navigate = useNavigate();
     const { isDark } = useTheme();
 
-    let user = null;
-    try { user = JSON.parse(localStorage.getItem('user')); } catch (e) {}
+    // FIX #20: Use safe getUser() helper instead of inline try/catch
+    const user = getUser();
 
     const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+        clearAuth();
         navigate('/');
     };
 
@@ -41,6 +43,7 @@ const CompanyDashboard = () => {
         { id: 'manage',    label: 'Job Management',     icon: PlusSquare },
         { id: 'analyzer',  label: 'Resume Analyzer',    icon: BrainCircuit, highlight: true },
         { id: 'analytics', label: 'Analytics',          icon: BarChart3 },
+        { id: 'interviews', label: 'Interview Scheduler', icon: Calendar },
         { id: 'settings',  label: 'Settings',           icon: SettingsIcon }, // ✅ FIXED HERE
     ];
 
@@ -50,6 +53,7 @@ const CompanyDashboard = () => {
             case 'manage':    return <JobManagement user={user} />;
             case 'analyzer':  return <ResumeAnalyzer user={user} />;
             case 'analytics': return <Analytics user={user} />;
+            case 'interviews': return <InterviewScheduler />;
             case 'settings':  return <Settings />;
             default:          return <Overview />;
         }
