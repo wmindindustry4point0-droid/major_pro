@@ -4,12 +4,11 @@ load_dotenv()
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os, re, string, io, hashlib, json, requests, time
-from concurrent.futures import ThreadPoolExecutor
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import lru_cache
 
 app = Flask(__name__)
 CORS(app)
-
 
 import nltk
 from nltk.corpus import stopwords
@@ -27,18 +26,32 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_MODEL   = "llama-3.1-8b-instant"
 GROQ_URL     = "https://api.groq.com/openai/v1/chat/completions"
 
+# ─── Shared HTTP session for connection pooling ───────────────────────────────
+_session = requests.Session()
+_session.headers.update({"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"})
+
+# ─── In-memory LRU cache for LLM results (keyed by content hash) ─────────────
+# Survives across requests within the same process — no disk I/O needed
+_llm_extract_cache:    dict = {}   # sha256(resume_text[:6000]) -> llm_extract result
+_llm_match_cache:      dict = {}   # sha256(skills+must+nice)   -> llm_match result
+_MAX_CACHE_ENTRIES = 500
+
+def _cache_get(store: dict, key: str):
+    return store.get(key)
+
+def _cache_set(store: dict, key: str, value):
+    if len(store) >= _MAX_CACHE_ENTRIES:
+        # evict oldest entry
+        store.pop(next(iter(store)))
+    store[key] = value
+
 
 def groq_post(payload: dict, retries: int = 4) -> dict:
-    """POST to Groq with exponential backoff on 429 rate limits."""
+    """POST to Groq with exponential backoff on 429 rate limits. Uses shared session."""
     for attempt in range(retries):
-        resp = requests.post(
-            GROQ_URL,
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-            json=payload,
-            timeout=30
-        )
+        resp = _session.post(GROQ_URL, json=payload, timeout=30)
         if resp.status_code == 429:
-            wait = 2 ** attempt  # 1s, 2s, 4s, 8s
+            wait = 2 ** attempt
             print(f"[Groq] Rate limited. Retrying in {wait}s... (attempt {attempt + 1}/{retries})")
             time.sleep(wait)
             continue
@@ -48,8 +61,17 @@ def groq_post(payload: dict, retries: int = 4) -> dict:
 
 
 def llm_extract(resume_text: str) -> dict:
+    # ── Cache check ────────────────────────────────────────────────────────────
+    cache_key = hashlib.sha256(resume_text[:6000].encode()).hexdigest()
+    cached = _cache_get(_llm_extract_cache, cache_key)
+    if cached:
+        print("[llm_extract] Cache hit")
+        return cached
+
     if not GROQ_API_KEY:
-        return _keyword_fallback(resume_text)
+        result = _keyword_fallback(resume_text)
+        _cache_set(_llm_extract_cache, cache_key, result)
+        return result
 
     prompt = f"""You are an expert technical recruiter. Extract structured information from the resume text below.
 
@@ -79,21 +101,35 @@ Resume:
             "response_format": {"type": "json_object"}
         })
         parsed = json.loads(result["choices"][0]["message"]["content"])
-        return {
+        data = {
             "skills":               [str(s).strip().strip('"\'\'') for s in parsed.get("skills", []) if s],
             "seniority":            str(parsed.get("seniority", "mid")),
             "domain":               str(parsed.get("domain", "")),
             "soft_skills":          [str(s).strip() for s in parsed.get("soft_skills", []) if s],
             "totalExperienceYears": float(parsed.get("totalExperienceYears", 0))
         }
+        _cache_set(_llm_extract_cache, cache_key, data)
+        return data
     except Exception as e:
         print(f"[LLM extract] Groq call failed: {e}. Using keyword fallback.")
-        return _keyword_fallback(resume_text)
+        result = _keyword_fallback(resume_text)
+        _cache_set(_llm_extract_cache, cache_key, result)
+        return result
 
 
 def llm_match_skills(candidate_skills: list, must_have: list, nice_to_have: list) -> dict:
+    # ── Cache check ────────────────────────────────────────────────────────────
+    raw_key = json.dumps([sorted(candidate_skills), sorted(must_have), sorted(nice_to_have)], sort_keys=True)
+    cache_key = hashlib.sha256(raw_key.encode()).hexdigest()
+    cached = _cache_get(_llm_match_cache, cache_key)
+    if cached:
+        print("[llm_match] Cache hit")
+        return cached
+
     if not GROQ_API_KEY or not must_have:
-        return _exact_match(candidate_skills, must_have, nice_to_have)
+        result = _exact_match(candidate_skills, must_have, nice_to_have)
+        _cache_set(_llm_match_cache, cache_key, result)
+        return result
 
     prompt = f"""You are a technical recruiter doing skill matching.
 
@@ -120,18 +156,21 @@ Return ONLY a JSON object with:
         })
         parsed = json.loads(result["choices"][0]["message"]["content"])
         def clean_skills(lst):
-            # Strip any surrounding quotes Groq may include in skill strings e.g. '"Python"' -> 'Python'
             return [str(s).strip().strip('"\'\'') for s in lst if s]
 
-        return {
+        data = {
             "must_matched": clean_skills(parsed.get("must_matched", [])),
             "must_missing": clean_skills(parsed.get("must_missing", must_have)),
             "nice_matched": clean_skills(parsed.get("nice_matched", [])),
             "score":        float(parsed.get("score", 0))
         }
+        _cache_set(_llm_match_cache, cache_key, data)
+        return data
     except Exception as e:
         print(f"[LLM match] Groq call failed: {e}. Using exact match fallback.")
-        return _exact_match(candidate_skills, must_have, nice_to_have)
+        result = _exact_match(candidate_skills, must_have, nice_to_have)
+        _cache_set(_llm_match_cache, cache_key, result)
+        return result
 
 
 TECH_SKILLS = [
@@ -171,29 +210,29 @@ def extract_skills(text: str) -> list:
 
 WEIGHTS = {'semantic': 0.30, 'skills': 0.35, 'experience': 0.20, 'projects': 0.15}
 
-CACHE_DIR = '/tmp/emb_cache'
-os.makedirs(CACHE_DIR, exist_ok=True)
+# ─── In-memory embedding cache (replaces /tmp disk cache) ────────────────────
+_emb_cache: dict = {}
 
 def get_embedding(text: str):
     h = hashlib.sha256(text.encode()).hexdigest()
-    cache_path = os.path.join(CACHE_DIR, f'{h}.json')
-    if os.path.exists(cache_path):
-        with open(cache_path) as f:
-            return json.load(f), h
+    if h in _emb_cache:
+        return _emb_cache[h], h
     vec = model.encode([text])[0].tolist()
-    try:
-        with open(cache_path, 'w') as f:
-            json.dump(vec, f)
-    except Exception:
-        pass
+    if len(_emb_cache) >= _MAX_CACHE_ENTRIES:
+        _emb_cache.pop(next(iter(_emb_cache)))
+    _emb_cache[h] = vec
     return vec, h
+
+
+# ─── PDF fetching with connection pooling ─────────────────────────────────────
+_pdf_session = requests.Session()
 
 def extract_text_from_pdf(url_or_path: str) -> str:
     import pdfplumber
     text = ""
     try:
         if url_or_path.startswith('http://') or url_or_path.startswith('https://'):
-            r = requests.get(url_or_path, timeout=30)
+            r = _pdf_session.get(url_or_path, timeout=20)  # tighter timeout; was 30
             r.raise_for_status()
             src = io.BytesIO(r.content)
         else:
@@ -408,6 +447,7 @@ def build_insights(candidate_skills, must_have, must_matched, must_missing, nice
     return strengths, weaknesses
 
 
+# ─── OPTIMIZED: Parallel Groq calls inside /analyze ──────────────────────────
 @app.route('/analyze', methods=['POST'])
 def analyze():
     data = request.json
@@ -421,16 +461,38 @@ def analyze():
     provided_jd_emb  = data.get('jd_embedding')
     provided_res_emb = data.get('resume_embedding')
     must_have = provided_must if provided_must else required_skills
+
     if not resume_path or not jd_text:
         return jsonify({'error': 'Missing resume_path or job_description'}), 400
+
     raw_text = extract_text_from_pdf(resume_path)
     if not raw_text.strip():
         return jsonify({'error': 'No parseable text in resume'}), 400
 
-    llm_data        = llm_extract(raw_text)
+    # ── Run LLM extract + structured parse + embeddings in parallel ────────────
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        fut_llm        = ex.submit(llm_extract, raw_text)
+        fut_structured = ex.submit(extract_structured, raw_text)
+
+        clean_jd = preprocess(jd_text)
+        fut_jd_emb = ex.submit(
+            lambda: (provided_jd_emb, None) if (provided_jd_emb and len(provided_jd_emb) > 0)
+                    else get_embedding(clean_jd)
+        )
+
+        clean_resume = preprocess(raw_text)
+        fut_res_emb = ex.submit(
+            lambda: (provided_res_emb, None) if (provided_res_emb and len(provided_res_emb) > 0)
+                    else get_embedding(clean_resume)
+        )
+
+        llm_data   = fut_llm.result()
+        structured = fut_structured.result()
+        jd_embedding,     jd_hash     = fut_jd_emb.result()
+        resume_embedding, resume_hash = fut_res_emb.result()
+
     skills          = llm_data["skills"]
     candidate_years = llm_data["totalExperienceYears"]
-    structured      = extract_structured(raw_text)
     if candidate_years == 0 and structured['totalExperienceYears'] > 0:
         candidate_years = structured['totalExperienceYears']
 
@@ -439,11 +501,7 @@ def analyze():
     email = extract_email(raw_text)
     phone = extract_phone(raw_text)
 
-    clean_jd = preprocess(jd_text)
-    jd_embedding, jd_hash = ((provided_jd_emb, None) if (provided_jd_emb and len(provided_jd_emb) > 0) else get_embedding(clean_jd))
-    clean_resume = preprocess(raw_text)
-    resume_embedding, resume_hash = ((provided_res_emb, None) if (provided_res_emb and len(provided_res_emb) > 0) else get_embedding(clean_resume))
-
+    # ── skill scoring uses cache — fast if same skills seen before ─────────────
     semantic_score = cosine_sim(resume_embedding, jd_embedding)
     skill_result   = score_skills(skills, must_have, nice_to_have)
     exp_score      = score_experience(candidate_years, min_exp, max_exp)
@@ -489,14 +547,23 @@ def parse_resume():
     raw_text = extract_text_from_pdf(resume_path)
     if not raw_text.strip(): return jsonify({'error': 'No parseable text'}), 400
 
-    llm_data   = llm_extract(raw_text)
-    skills     = llm_data["skills"]
-    llm_years  = llm_data["totalExperienceYears"]
-    structured = extract_structured(raw_text)
+    # ── Parallel: LLM extract + structured parse + embedding ──────────────────
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        fut_llm        = ex.submit(llm_extract, raw_text)
+        fut_structured = ex.submit(extract_structured, raw_text)
+        fut_emb        = ex.submit(get_embedding, preprocess(raw_text))
+
+        llm_data   = fut_llm.result()
+        structured = fut_structured.result()
+        embedding, emb_hash = fut_emb.result()
+
+    skills          = llm_data["skills"]
+    llm_years       = llm_data["totalExperienceYears"]
     candidate_years = llm_years if llm_years > 0 else structured['totalExperienceYears']
     lines = [l.strip() for l in raw_text.split('\n') if l.strip()]
-    name  = extract_name(lines); email = extract_email(raw_text); phone = extract_phone(raw_text)
-    embedding, emb_hash = get_embedding(preprocess(raw_text))
+    name  = extract_name(lines)
+    email = extract_email(raw_text)
+    phone = extract_phone(raw_text)
 
     return jsonify({
         'status': 'Success', 'candidateName': name, 'email': email, 'phone': phone,
@@ -513,6 +580,7 @@ def extract_resume():
     return parse_resume()
 
 
+# ─── OPTIMIZED batch: parallel PDF fetch + parallel LLM + no sleep ───────────
 @app.route('/analyze_batch', methods=['POST'])
 def analyze_batch():
     data         = request.json
@@ -522,30 +590,55 @@ def analyze_batch():
     nice_to_have = data.get('nice_to_have_skills', [])
     min_exp      = float(data.get('min_experience', 0))
     max_exp      = float(data.get('max_experience', 99))
-    if not resumes or not jd_text: return jsonify({'error': 'Missing resumes or job_description'}), 400
+
+    if not resumes or not jd_text:
+        return jsonify({'error': 'Missing resumes or job_description'}), 400
+
     jd_embedding, _ = get_embedding(preprocess(jd_text))
 
     def process_one_with_text(resume, raw_text):
-        r_id = resume.get('id'); r_fileName = resume.get('fileName', ''); res_emb = resume.get('existingEmbedding')
+        r_id = resume.get('id')
+        r_fileName = resume.get('fileName', '')
+        res_emb = resume.get('existingEmbedding')
         try:
-            if not raw_text.strip(): return {'id': r_id, 'fileName': r_fileName, 'status': 'Failed', 'error': 'No parseable text'}
+            if not raw_text.strip():
+                return {'id': r_id, 'fileName': r_fileName, 'status': 'Failed', 'error': 'No parseable text'}
+
             lines = [l.strip() for l in raw_text.split('\n') if l.strip()]
-            name  = extract_name(lines); email = extract_email(raw_text); phone = extract_phone(raw_text)
-            llm_data        = llm_extract(raw_text)
+            name  = extract_name(lines)
+            email = extract_email(raw_text)
+            phone = extract_phone(raw_text)
+
+            # ── Parallel within each resume: LLM extract + structured ──────────
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                fut_llm        = ex.submit(llm_extract, raw_text)
+                fut_structured = ex.submit(extract_structured, raw_text)
+                llm_data   = fut_llm.result()
+                structured = fut_structured.result()
+
             skills          = llm_data["skills"]
             candidate_years = llm_data["totalExperienceYears"]
-            structured      = extract_structured(raw_text)
             if candidate_years == 0 and structured['totalExperienceYears'] > 0:
                 candidate_years = structured['totalExperienceYears']
-            resume_embedding = (res_emb if (res_emb and len(res_emb) > 0) else get_embedding(preprocess(raw_text))[0])
+
+            resume_embedding = (res_emb if (res_emb and len(res_emb) > 0)
+                                else get_embedding(preprocess(raw_text))[0])
+
             semantic  = cosine_sim(resume_embedding, jd_embedding)
             skill_res = score_skills(skills, must_have, nice_to_have)
             exp_s     = score_experience(candidate_years, min_exp, max_exp)
             proj_s    = score_projects(structured['projects'], jd_embedding)
-            breakdown = {'semantic': round(semantic, 4), 'skills': round(skill_res['score'], 4), 'experience': round(exp_s, 4), 'projects': round(proj_s, 4)}
+
+            breakdown = {
+                'semantic':   round(semantic, 4),
+                'skills':     round(skill_res['score'], 4),
+                'experience': round(exp_s, 4),
+                'projects':   round(proj_s, 4)
+            }
             final = round(sum(breakdown[k] * WEIGHTS[k] for k in WEIGHTS) * 100, 1)
             nice_missing = [s for s in nice_to_have if s not in skill_res['nice_matched']]
             strengths, weaknesses = build_insights(skills, must_have, skill_res['must_matched'], skill_res['must_missing'], nice_missing, candidate_years, min_exp, semantic)
+
             return {
                 'id': r_id, 'fileName': r_fileName, 'status': 'Success',
                 'candidateName': name, 'email': email, 'phone': phone,
@@ -561,23 +654,37 @@ def analyze_batch():
         except Exception as e:
             return {'id': r_id, 'fileName': r_fileName, 'status': 'Failed', 'error': str(e)}
 
+    # ── Step 1: Fetch all PDFs in parallel ────────────────────────────────────
     def fetch_pdf_text(resume):
         return (resume, extract_text_from_pdf(resume['path']))
 
-    # Fetch all PDFs in parallel (I/O bound - safe to parallelize)
-    with ThreadPoolExecutor(max_workers=min(8, len(resumes))) as io_executor:
-        resume_texts = list(io_executor.map(fetch_pdf_text, resumes))
+    with ThreadPoolExecutor(max_workers=min(8, len(resumes))) as io_ex:
+        resume_texts = list(io_ex.map(fetch_pdf_text, resumes))
 
-    # Process sequentially with a delay to respect Groq rate limits (~30 req/min free tier)
-    # Each resume makes 2 Groq calls; 1.5s gap keeps us well under the limit
+    # ── Step 2: Process resumes in parallel (LLM cache makes this safe) ───────
+    # Each resume's llm_extract result is cached by content hash, so even if
+    # two resumes are identical, Groq is only called once. The cache absorbs
+    # the deduplication; no sleep needed between calls that hit the cache.
+    # For truly unique resumes we use a small worker pool to stay within Groq
+    # rate limits (~30 req/min on free tier = ~1 new resume every 2s max).
+    PARALLEL_WORKERS = 3  # safe for free-tier Groq; raise to 6 for paid tier
+
     results = []
-    for i, (resume, text) in enumerate(resume_texts):
-        results.append(process_one_with_text(resume, text))
-        if i < len(resume_texts) - 1:
-            time.sleep(1.5)
+    with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as proc_ex:
+        futures = {
+            proc_ex.submit(process_one_with_text, resume, text): resume
+            for resume, text in resume_texts
+        }
+        for fut in as_completed(futures):
+            results.append(fut.result())
 
-    successful = sorted([r for r in results if r.get('status') == 'Success'], key=lambda x: x.get('finalScore', 0), reverse=True)
-    for i, r in enumerate(successful): r['rank'] = i + 1
+    successful = sorted(
+        [r for r in results if r.get('status') == 'Success'],
+        key=lambda x: x.get('finalScore', 0), reverse=True
+    )
+    for i, r in enumerate(successful):
+        r['rank'] = i + 1
+
     failed = [r for r in results if r.get('status') != 'Success']
     return jsonify({'analyzed_candidates': successful + failed})
 
@@ -585,23 +692,28 @@ def analyze_batch():
 @app.route('/health', methods=['GET'])
 def health():
     groq_status = "configured" if GROQ_API_KEY else "not configured (keyword fallback active)"
-    return jsonify({'status': 'ok', 'model': 'all-MiniLM-L6-v2', 'version': '3.0', 'llm': GROQ_MODEL, 'groq_status': groq_status})
+    return jsonify({
+        'status': 'ok',
+        'model': 'all-MiniLM-L6-v2',
+        'version': '3.1-optimized',
+        'llm': GROQ_MODEL,
+        'groq_status': groq_status,
+        'cache_stats': {
+            'embeddings': len(_emb_cache),
+            'llm_extract': len(_llm_extract_cache),
+            'llm_match':   len(_llm_match_cache),
+        }
+    })
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FEATURE: AI Interview Prep Chatbot
-# POST /prep_chat
-# Body: { job_title, job_description, candidate_skills, history, user_message }
-# Returns: { reply, question_type }
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# ─── Interview Prep Chatbot ───────────────────────────────────────────────────
 @app.route('/prep_chat', methods=['POST'])
 def prep_chat():
     data              = request.json
     job_title         = data.get('job_title', 'the role')
     job_description   = data.get('job_description', '')
     candidate_skills  = data.get('candidate_skills', [])
-    history           = data.get('history', [])          # [{role, content}, ...]
+    history           = data.get('history', [])
     user_message      = data.get('user_message', '')
 
     if not user_message:
@@ -628,7 +740,6 @@ Your job:
 Always respond in plain conversational text. No markdown headers. Keep replies under 150 words."""
 
     messages = [{"role": "system", "content": system_prompt}]
-    # Append history (last 10 turns to stay within token limits)
     for h in history[-10:]:
         messages.append({"role": h["role"], "content": h["content"]})
     messages.append({"role": "user", "content": user_message})
@@ -647,34 +758,15 @@ Always respond in plain conversational text. No markdown headers. Keep replies u
         return jsonify({'reply': "Sorry, I couldn't generate a response right now. Please try again.", 'question_type': 'error'}), 200
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FEATURE: Async Video Interview — AI Transcription + Score
-# ═══════════════════════════════════════════════════════════════════════════════
-# FEATURE: Video Response Scoring — AssemblyAI + Groq
-# POST /score_video_response
-# Body (multipart/form-data OR json):
-#   - audio_url: S3 pre-signed URL to the video/audio file  (preferred)
-#   - transcript: fallback plain text transcript
-#   - question, job_title, job_description
-# Returns: { score, content_score, communication_score, feedback,
-#            strengths, improvements, transcript, speech_metrics }
-# ═══════════════════════════════════════════════════════════════════════════════
-
+# ─── Video Interview Scoring ──────────────────────────────────────────────────
 ASSEMBLYAI_API_KEY = os.environ.get("ASSEMBLYAI_API_KEY", "")
 ASSEMBLYAI_BASE    = "https://api.assemblyai.com/v2"
 
 def assemblyai_transcribe(audio_url: str) -> dict:
-    """
-    Submit audio to AssemblyAI for transcription + speech analysis.
-    Returns dict with transcript text and speech metrics.
-    Falls back gracefully if API key not set.
-    """
     if not ASSEMBLYAI_API_KEY:
         return {"transcript": "", "metrics": {}, "error": "no_key"}
 
     headers = {"authorization": ASSEMBLYAI_API_KEY, "content-type": "application/json"}
-
-    # Submit transcription job with all analysis features enabled
     payload = {
         "audio_url": audio_url,
         "sentiment_analysis": True,
@@ -690,7 +782,6 @@ def assemblyai_transcribe(audio_url: str) -> dict:
         print(f"[AssemblyAI] Submit error: {e}")
         return {"transcript": "", "metrics": {}, "error": str(e)}
 
-    # Poll until complete (max 120s)
     for _ in range(60):
         time.sleep(2)
         try:
@@ -703,43 +794,34 @@ def assemblyai_transcribe(audio_url: str) -> dict:
 
         status = result.get("status")
         if status == "completed":
-            # Extract speech metrics from AssemblyAI response
             words          = result.get("words", [])
             total_words    = len(words)
-            audio_duration = result.get("audio_duration", 0) or 1  # seconds
+            audio_duration = result.get("audio_duration", 0) or 1
             wpm            = round((total_words / audio_duration) * 60) if audio_duration else 0
-
-            # Sentiment breakdown
             sentiments     = result.get("sentiment_analysis_results", [])
             pos = sum(1 for s in sentiments if s.get("sentiment") == "POSITIVE")
             neg = sum(1 for s in sentiments if s.get("sentiment") == "NEGATIVE")
             neu = sum(1 for s in sentiments if s.get("sentiment") == "NEUTRAL")
             total_sents    = len(sentiments) or 1
-            sentiment_score = round((pos / total_sents) * 100)  # 0-100, higher = more positive
-
-            # Filler word count (common fillers)
+            sentiment_score = round((pos / total_sents) * 100)
             raw_text = (result.get("text") or "").lower()
             fillers  = ["um", "uh", "like", "you know", "basically", "literally", "right", "so"]
             filler_count = sum(raw_text.count(f" {f} ") for f in fillers)
-
-            # Confidence: AssemblyAI provides per-word confidence 0-1
             avg_confidence = round(
                 (sum(w.get("confidence", 0) for w in words) / max(len(words), 1)) * 100
             )
-
             metrics = {
                 "words_per_minute":  wpm,
                 "total_words":       total_words,
                 "audio_duration_s":  round(audio_duration),
-                "sentiment_score":   sentiment_score,  # 0-100
+                "sentiment_score":   sentiment_score,
                 "filler_word_count": filler_count,
-                "avg_confidence":    avg_confidence,   # 0-100
+                "avg_confidence":    avg_confidence,
                 "positive_pct":      round((pos / total_sents) * 100),
                 "negative_pct":      round((neg / total_sents) * 100),
                 "neutral_pct":       round((neu / total_sents) * 100),
             }
             return {"transcript": result.get("text", ""), "metrics": metrics, "error": None}
-
         elif status == "error":
             print(f"[AssemblyAI] Transcription error: {result.get('error')}")
             return {"transcript": "", "metrics": {}, "error": result.get("error")}
@@ -749,7 +831,6 @@ def assemblyai_transcribe(audio_url: str) -> dict:
 
 def groq_score_response(transcript: str, question: str, job_title: str,
                          job_description: str, speech_metrics: dict) -> dict:
-    """Score response content via Groq LLM, incorporating speech metrics."""
     metrics_summary = ""
     if speech_metrics:
         metrics_summary = f"""
@@ -760,7 +841,6 @@ Speech Analysis (from audio):
 - Speech confidence score: {speech_metrics.get("avg_confidence", "N/A")}%
 - Sentiment: {speech_metrics.get("positive_pct", "N/A")}% positive, {speech_metrics.get("negative_pct", "N/A")}% negative
 """
-
     prompt = f"""You are an expert technical interviewer evaluating a candidate's video interview response.
 
 Role: {job_title}
@@ -770,11 +850,9 @@ Candidate's Answer (transcript): {transcript[:2500]}
 
 Evaluate and return ONLY a valid JSON object with these exact keys:
 - "content_score": integer 0-100
-  (How well did they answer the question? Relevance, depth, accuracy, use of examples)
 - "communication_score": integer 0-100
-  (Clarity, structure, pacing — factor in filler words and WPM if provided)
 - "overall_score": integer 0-100 (weighted: 60% content, 40% communication)
-- "feedback": string, 2-3 sentences of specific, constructive feedback referencing their actual answer
+- "feedback": string, 2-3 sentences of specific, constructive feedback
 - "strengths": array of exactly 2 short specific strength strings
 - "improvements": array of exactly 2 short specific improvement strings
 
@@ -806,23 +884,21 @@ Be fair, specific, and encouraging. Return ONLY the JSON, no markdown."""
 @app.route('/score_video_response', methods=['POST'])
 def score_video_response():
     data            = request.json or {}
-    audio_url       = data.get("audio_url", "")       # S3 pre-signed URL
-    transcript_in   = data.get("transcript", "")       # fallback transcript
+    audio_url       = data.get("audio_url", "")
+    transcript_in   = data.get("transcript", "")
     question        = data.get("question", "")
     job_title       = data.get("job_title", "the role")
     job_description = data.get("job_description", "")
 
-    speech_metrics  = {}
+    speech_metrics   = {}
     final_transcript = transcript_in
 
-    # Step 1: Try AssemblyAI transcription if audio_url provided
     if audio_url and ASSEMBLYAI_API_KEY:
         print(f"[score_video] Using AssemblyAI for audio transcription")
         aai_result = assemblyai_transcribe(audio_url)
         if not aai_result.get("error") and aai_result.get("transcript"):
             final_transcript = aai_result["transcript"]
             speech_metrics   = aai_result["metrics"]
-            print(f"[score_video] AssemblyAI done: {len(final_transcript)} chars, metrics: {speech_metrics}")
         else:
             print(f"[score_video] AssemblyAI failed ({aai_result.get('error')}), falling back to browser transcript")
     else:
@@ -832,13 +908,12 @@ def score_video_response():
     if not final_transcript.strip():
         return jsonify({"error": "No transcript available to score."}), 400
 
-    # Step 2: Score with Groq
     scores = groq_score_response(final_transcript, question, job_title, job_description, speech_metrics)
 
     return jsonify({
         **scores,
-        "transcript":     final_transcript,
-        "speech_metrics": speech_metrics,
+        "transcript":      final_transcript,
+        "speech_metrics":  speech_metrics,
         "used_assemblyai": bool(speech_metrics),
     })
 
