@@ -4,8 +4,7 @@ pdfplumber
 nltk
 sentence-transformers
 scikit-learn
-torch
 numpy
-pandas
 gunicorn
 requests
+python-dotenv

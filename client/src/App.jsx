@@ -42,6 +42,8 @@ const AppContent = () => {
                     <Route path="/company-dashboard" element={
                         <ProtectedRoute allowedRole="company"><CompanyDashboard /></ProtectedRoute>
                     } />
+                    {/* Catch-all: redirect unknown routes to home instead of blank page */}
+                    <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </div>
         </div>

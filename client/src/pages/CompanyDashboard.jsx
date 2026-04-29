@@ -2,16 +2,22 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     LayoutDashboard, PlusSquare, BrainCircuit,
-    Settings, BarChart3, LogOut, ChevronRight, Menu, X,
+    Settings as SettingsIcon,
+    BarChart3, LogOut, ChevronRight, Menu, X, Calendar,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+// FIX #20: Use shared safe auth utilities
+import { getUser, clearAuth } from '../utils/auth';
 
-import Overview from '../components/dashboard/Overview';
+import { CompanyOverview as Overview } from '../components/dashboard/Overview';
 import JobManagement from '../components/dashboard/JobManagement';
 import ResumeAnalyzer from '../components/dashboard/ResumeAnalyzer';
+import Analytics from '../components/dashboard/Analytics';
+import Settings from '../components/dashboard/Settings';
 import ThemeToggle from '../components/ThemeToggle';
 import NotificationBell from '../components/NotificationBell';
 import { useTheme } from '../context/ThemeContext';
+import InterviewScheduler from '../components/dashboard/InterviewScheduler';
 
 const CompanyDashboard = () => {
     const [activeView,  setActiveView]  = useState('overview');
@@ -19,12 +25,11 @@ const CompanyDashboard = () => {
     const navigate = useNavigate();
     const { isDark } = useTheme();
 
-    let user = null;
-    try { user = JSON.parse(localStorage.getItem('user')); } catch (e) {}
+    // FIX #20: Use safe getUser() helper instead of inline try/catch
+    const user = getUser();
 
     const handleLogout = () => {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
+        clearAuth();
         navigate('/');
     };
 
@@ -34,11 +39,12 @@ const CompanyDashboard = () => {
     };
 
     const navItems = [
-        { id: 'overview',  label: 'Dashboard Overview', icon: LayoutDashboard                  },
-        { id: 'manage',    label: 'Job Management',     icon: PlusSquare                       },
-        { id: 'analyzer',  label: 'Resume Analyzer',    icon: BrainCircuit, highlight: true    },
-        { id: 'analytics', label: 'Analytics',          icon: BarChart3                        },
-        { id: 'settings',  label: 'Settings',           icon: Settings                         },
+        { id: 'overview',  label: 'Dashboard Overview', icon: LayoutDashboard },
+        { id: 'manage',    label: 'Job Management',     icon: PlusSquare },
+        { id: 'analyzer',  label: 'Resume Analyzer',    icon: BrainCircuit, highlight: true },
+        { id: 'analytics', label: 'Analytics',          icon: BarChart3 },
+        { id: 'interviews', label: 'Interview Scheduler', icon: Calendar },
+        { id: 'settings',  label: 'Settings',           icon: SettingsIcon }, // ✅ FIXED HERE
     ];
 
     const renderSecondaryView = () => {
@@ -46,8 +52,9 @@ const CompanyDashboard = () => {
             case 'overview':  return <Overview />;
             case 'manage':    return <JobManagement user={user} />;
             case 'analyzer':  return <ResumeAnalyzer user={user} />;
-            case 'analytics': return <div className={`text-center mt-20 text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Analytics module coming soon...</div>;
-            case 'settings':  return <div className={`text-center mt-20 text-sm ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Settings module coming soon...</div>;
+            case 'analytics': return <Analytics user={user} />;
+            case 'interviews': return <InterviewScheduler />;
+            case 'settings':  return <Settings />;
             default:          return <Overview />;
         }
     };
@@ -61,7 +68,6 @@ const CompanyDashboard = () => {
     return (
         <div className={`flex h-screen font-sans overflow-hidden ${mainBg}`}>
 
-            {/* Mobile sidebar overlay */}
             {sidebarOpen && (
                 <div
                     className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm lg:hidden"
@@ -69,7 +75,6 @@ const CompanyDashboard = () => {
                 />
             )}
 
-            {/* ── Sidebar ── */}
             <aside className={`
                 fixed lg:relative inset-y-0 left-0 z-50 lg:z-20
                 w-72 flex flex-col shrink-0 h-screen
@@ -77,7 +82,6 @@ const CompanyDashboard = () => {
                 ${sidebarBg}
                 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
             `}>
-                {/* Logo */}
                 <div className={`h-14 sm:h-20 flex items-center px-4 sm:px-6 border-b ${divCol}`}>
                     <div className="flex items-center gap-2">
                         <BrainCircuit className="w-7 h-7 sm:w-8 sm:h-8 text-indigo-400" />
@@ -85,7 +89,6 @@ const CompanyDashboard = () => {
                             HireMind AI
                         </span>
                     </div>
-                    {/* Close — mobile only */}
                     <button
                         onClick={() => setSidebarOpen(false)}
                         className={`ml-auto lg:hidden p-1.5 rounded-lg transition ${isDark ? 'text-slate-400 hover:text-white hover:bg-slate-800' : 'text-slate-400 hover:text-slate-900 hover:bg-slate-100'}`}
@@ -94,7 +97,6 @@ const CompanyDashboard = () => {
                     </button>
                 </div>
 
-                {/* Nav items */}
                 <div className="flex-1 overflow-y-auto py-4 sm:py-6 px-3 sm:px-4 space-y-1 custom-scrollbar">
                     <div className={`text-xs font-semibold uppercase tracking-wider mb-3 ml-2 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
                         Main Menu
@@ -129,7 +131,6 @@ const CompanyDashboard = () => {
                     })}
                 </div>
 
-                {/* Bottom — user card + theme + logout */}
                 <div className={`p-3 sm:p-4 border-t space-y-2 ${divCol}`}>
                     <div className={`flex items-center gap-3 p-2.5 sm:p-3 rounded-xl border ${isDark ? 'bg-slate-800/30 border-slate-800/50' : 'bg-slate-50 border-slate-200'}`}>
                         <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center font-bold text-white shadow-lg shrink-0 text-sm">
@@ -156,16 +157,9 @@ const CompanyDashboard = () => {
                 </div>
             </aside>
 
-            {/* ── Main ── */}
             <main className="flex-1 flex flex-col h-screen overflow-hidden relative min-w-0">
-                {isDark && (
-                    <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-indigo-500/5 rounded-full blur-[120px] pointer-events-none -z-10" />
-                )}
-
-                {/* Header */}
                 <header className={`h-14 sm:h-20 border-b backdrop-blur-sm flex items-center justify-between px-4 sm:px-8 shrink-0 z-10 ${headerBg}`}>
                     <div className="flex items-center gap-3">
-                        {/* Hamburger — mobile only */}
                         <button
                             onClick={() => setSidebarOpen(true)}
                             className={`lg:hidden p-2 rounded-lg transition-colors ${
@@ -184,29 +178,10 @@ const CompanyDashboard = () => {
                     </div>
 
                     <div className="flex items-center gap-2 sm:gap-4">
-                        {/* Logout — mobile header only */}
-                        <button
-                            onClick={handleLogout}
-                            title="Log out"
-                            className={`lg:hidden p-2 rounded-lg transition-colors ${
-                                isDark ? 'text-slate-400 hover:text-rose-400 hover:bg-rose-500/10' : 'text-slate-500 hover:text-rose-500 hover:bg-rose-50'
-                            }`}
-                        >
-                            <LogOut className="w-4 h-4" />
-                        </button>
-
-                        {/* Notifications */}
                         <NotificationBell />
-
-                        {/* System online badge — hidden on small screens */}
-                        <div className="hidden sm:flex px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold items-center gap-2">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                            System Online
-                        </div>
                     </div>
                 </header>
 
-                {/* Scrollable content */}
                 <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-8 custom-scrollbar">
                     <AnimatePresence mode="wait">
                         <motion.div
